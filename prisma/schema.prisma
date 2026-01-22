@@ -1,0 +1,176 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id       String   @id @default(uuid())
+  email    String   @unique
+  password String
+  role     UserRole @default(FREE)
+
+  //trỏ ngược lại
+  credits   UserCredit?
+  jobs      GenerateJob[]
+  galleries GalleryItem[]
+
+  createdAt          DateTime            @default(now())
+  creditTransactions CreditTransaction[]
+  canvasSessions     CanvasSession[]
+}
+
+model UserCredit {
+  userId  String @id
+  balance Int    @default(0)
+  user    User   @relation(fields: [userId], references: [id])
+
+  updatedAt DateTime @updatedAt
+}
+
+model CreditTransaction {
+  id     String @id @default(uuid())
+  userId String
+  amount Int
+  reason String
+
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+}
+
+enum UserRole {
+  FREE
+  PRO
+  ADMIN
+}
+
+model GenerateJob {
+  id             String  @id @default(uuid())
+  userId         String
+  type           JobType
+  prompt         String
+  negativePrompt String?
+  modelName      String
+  turboEnabled   Boolean @default(false)
+
+  status   JobStatus @default(PENDING)
+  progress Int       @default(0)
+
+  extraConfig Json? // future-proof (style, lighting, camera...)
+
+  assets Asset[]
+  logs   JobLog[]
+
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+}
+
+enum JobType {
+  TEXT_TO_IMAGE
+  IMAGE_TO_IMAGE
+  IMAGE_TO_VIDEO
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  DONE
+  FAILED
+}
+
+model Asset {
+  id    String    @id @default(uuid())
+  jobId String
+  type  AssetType
+
+  versions AssetVersion[]
+
+  job       GenerateJob @relation(fields: [jobId], references: [id])
+  createdAt DateTime    @default(now())
+}
+
+model AssetVersion {
+  id      String @id @default(uuid())
+  assetId String
+  version Int
+
+  fileUrl String
+  seed    BigInt?
+  width   Int?
+  height  Int?
+  quality String?
+
+  metadata Json? // future AI params
+
+  asset     Asset         @relation(fields: [assetId], references: [id])
+  galleries GalleryItem[]
+
+  exploreItems ExploreItem[]
+  createdAt    DateTime      @default(now())
+
+  @@unique([assetId, version])
+}
+
+enum AssetType {
+  IMAGE
+  VIDEO
+}
+
+model ExploreItem {
+  id             String @id @default(uuid())
+  assetVersionId String
+
+  title      String
+  topic      String
+  isTrending Boolean @default(false)
+  score      Float   @default(0)
+
+  assetVersion AssetVersion @relation(fields: [assetVersionId], references: [id])
+
+  createdAt DateTime @default(now())
+}
+
+model GalleryItem {
+  id             String  @id @default(uuid())
+  userId         String
+  assetVersionId String
+  isPublic       Boolean @default(false)
+
+  user         User         @relation(fields: [userId], references: [id])
+  assetVersion AssetVersion @relation(fields: [assetVersionId], references: [id])
+
+  createdAt DateTime @default(now())
+}
+
+model SmartIcon {
+  id         String @id @default(uuid())
+  name       String
+  category   String
+  attributes Json // default attributes (size, color, role...)
+}
+
+model CanvasSession {
+  id     String @id @default(uuid())
+  userId String
+  layout Json // icon positions, sketch data
+
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+}
+
+model JobLog {
+  id      String @id @default(uuid())
+  jobId   String
+  message String
+
+  job       GenerateJob @relation(fields: [jobId], references: [id])
+  createdAt DateTime    @default(now())
+}
