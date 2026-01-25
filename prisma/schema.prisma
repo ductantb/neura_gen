@@ -22,6 +22,11 @@ model User {
   credits   UserCredit?
   jobs      GenerateJob[]
   galleries GalleryItem[]
+  posts     Post[]
+  likes     PostLike[]
+  comments  Comment[]
+  followers Follow[]      @relation("followers")
+  following Follow[]      @relation("following")
 
   createdAt          DateTime            @default(now())
   creditTransactions CreditTransaction[]
@@ -31,7 +36,7 @@ model User {
 model UserCredit {
   userId  String @id
   balance Int    @default(0)
-  user    User   @relation(fields: [userId], references: [id])
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   updatedAt DateTime @updatedAt
 }
@@ -42,7 +47,7 @@ model CreditTransaction {
   amount Int
   reason String
 
-  user      User     @relation(fields: [userId], references: [id])
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
 }
 
@@ -69,7 +74,7 @@ model GenerateJob {
   assets Asset[]
   logs   JobLog[]
 
-  user      User     @relation(fields: [userId], references: [id])
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
 }
 
@@ -93,7 +98,7 @@ model Asset {
 
   versions AssetVersion[]
 
-  job       GenerateJob @relation(fields: [jobId], references: [id])
+  job       GenerateJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
   createdAt DateTime    @default(now())
 }
 
@@ -110,7 +115,8 @@ model AssetVersion {
 
   metadata Json? // future AI params
 
-  asset     Asset         @relation(fields: [assetId], references: [id])
+  posts     Post[]
+  asset     Asset         @relation(fields: [assetId], references: [id], onDelete: Cascade)
   galleries GalleryItem[]
 
   exploreItems ExploreItem[]
@@ -126,16 +132,22 @@ enum AssetType {
 
 model ExploreItem {
   id             String @id @default(uuid())
+  postId         String @unique
   assetVersionId String
 
   title      String
   topic      String
   isTrending Boolean @default(false)
   score      Float   @default(0)
+  post       Post    @relation(fields: [postId], references: [id], onDelete: Cascade)
 
-  assetVersion AssetVersion @relation(fields: [assetVersionId], references: [id])
+  assetVersion AssetVersion @relation(fields: [assetVersionId], references: [id], onDelete: Restrict)
 
   createdAt DateTime @default(now())
+
+  @@index([score])
+  @@index([topic])
+  @@index([isTrending])
 }
 
 model GalleryItem {
@@ -144,8 +156,8 @@ model GalleryItem {
   assetVersionId String
   isPublic       Boolean @default(false)
 
-  user         User         @relation(fields: [userId], references: [id])
-  assetVersion AssetVersion @relation(fields: [assetVersionId], references: [id])
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assetVersion AssetVersion @relation(fields: [assetVersionId], references: [id], onDelete: Restrict)
 
   createdAt DateTime @default(now())
 }
@@ -162,7 +174,7 @@ model CanvasSession {
   userId String
   layout Json // icon positions, sketch data
 
-  user      User     @relation(fields: [userId], references: [id])
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
 }
 
@@ -171,6 +183,75 @@ model JobLog {
   jobId   String
   message String
 
-  job       GenerateJob @relation(fields: [jobId], references: [id])
+  job       GenerateJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
   createdAt DateTime    @default(now())
+}
+
+model Post {
+  id             String @id @default(uuid())
+  userId         String
+  assetVersionId String
+
+  caption  String?
+  isPublic Boolean @default(true)
+
+  likeCount    Int @default(0)
+  commentCount Int @default(0)
+  viewCount    Int @default(0)
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+  assetVersion AssetVersion @relation(fields: [assetVersionId], references: [id], onDelete: Restrict)
+
+  likes    PostLike[]
+  comments Comment[]
+  views    PostView[]
+  explore  ExploreItem?
+
+  createdAt DateTime @default(now())
+}
+
+model PostLike {
+  userId String
+  postId String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@id([userId, postId])
+}
+
+model Comment {
+  id      String @id @default(uuid())
+  userId  String
+  postId  String
+  content String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+}
+
+model PostView {
+  id     String  @id @default(uuid())
+  userId String?
+  postId String
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+}
+
+model Follow {
+  followerId  String
+  followingId String
+
+  follower  User @relation("following", fields: [followerId], references: [id], onDelete: Cascade)
+  following User @relation("followers", fields: [followingId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@id([followerId, followingId])
 }
