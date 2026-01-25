@@ -30,6 +30,8 @@
     "@prisma/client": "^6.19.2",
     "axios": "^1.13.2",
     "bcrypt": "^6.0.0",
+    "bullmq": "^5.67.1",
+    "ioredis": "^5.9.2",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "reflect-metadata": "^0.2.2",
