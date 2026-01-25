@@ -4,6 +4,7 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { User } from '../../common/decorators/user.decorator';
+import { Req } from '@nestjs/common';
 
 @Controller('auth')
 export class AuthController {
@@ -21,7 +22,11 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Get('me')
-  me(@User() user) {
-    return this.authService.getMe(user.id);
+  getMe(@Req() req: any) {
+    return {
+    id: req.user.sub,
+    email: req.user.email,
+    role: req.user.role,
+  };
   }
 }
