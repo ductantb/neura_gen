@@ -6,6 +6,7 @@ import {
   AssetType,
 } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { use } from 'passport';
 
 const prisma = new PrismaClient();
 
@@ -13,6 +14,7 @@ const prisma = new PrismaClient();
 const SEED = {
   userEmail: 'test@neura.ai',
   userPassword: '123456',
+  username: 'testuser',
   jobSeedKey: 'seed:v1:job:image_to_video:cyberpunk_city',
   assetVersionSeedKey: 'seed:v1:asset_version:video:sample_mp4',
 };
@@ -32,6 +34,7 @@ async function main() {
     create: {
       email: SEED.userEmail,
       password: passwordHash,
+      username: SEED.username,
       role: UserRole.FREE,
     },
   });

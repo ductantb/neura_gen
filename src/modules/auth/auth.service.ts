@@ -2,6 +2,7 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import { hashPassword, comparePassword } from '../../utils/hash';
+import { JwtPayload } from 'src/common/guards/jwt-auth.guard';
 
 @Injectable()
 export class AuthService {
@@ -17,6 +18,7 @@ export class AuthService {
       data: {
         email,
         password: hashed,
+        username: email.split('@')[0]
       },
     });
 
@@ -40,9 +42,10 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const payload = {
+    const payload: JwtPayload = {
       sub: user.id,
       email: user.email,
+      username: user.username,
       role: user.role,
     };
 
@@ -51,14 +54,11 @@ export class AuthService {
     };
   }
 
-  async getMe(userId: string) {
-    return this.prisma.user.findUnique({
+  async changePassword(userId: string, newPassword: string) {
+    const hashed = await hashPassword(newPassword);
+    await this.prisma.user.update({
       where: { id: userId },
-      select: {
-        id: true,
-        email: true,
-        role: true,
-      },
+      data: { password: hashed },
     });
   }
 }
