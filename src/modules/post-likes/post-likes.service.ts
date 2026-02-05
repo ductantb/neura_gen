@@ -7,9 +7,19 @@ import { PaginationDto } from 'src/common/dto/pagination.dto';
 export class PostLikesService {
   constructor(private readonly prismaService: PrismaService) {}
 
-  create(createPostLikeDto: CreatePostLikeDto) {
-    return this.prismaService.postLike.create({
-      data: createPostLikeDto,
+  create(userId: string, createPostLikeDto: CreatePostLikeDto) {
+    return this.prismaService.$transaction(async (prisma) => {
+      const postLike = await prisma.postLike.create({
+        data: {
+          ...createPostLikeDto,
+          userId,
+        },
+      });
+      await prisma.post.update({
+        where: { id: createPostLikeDto.postId },
+        data: { likeCount: { increment: 1 } },
+      });
+      return postLike;
     });
   }
 

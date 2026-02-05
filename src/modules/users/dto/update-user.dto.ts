@@ -1,4 +1,5 @@
 import { PartialType } from '@nestjs/swagger';
+import { User, UserRole } from '@prisma/client';
 import {
   IsOptional,
   IsString,

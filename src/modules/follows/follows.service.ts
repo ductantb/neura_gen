@@ -5,7 +5,6 @@ import { PaginationDto } from 'src/common/dto/pagination.dto';
 
 @Injectable()
 export class FollowsService {
-
   constructor(private readonly prismaService: PrismaService) {}
 
   create(createFollowDto: CreateFollowDto) {
@@ -14,7 +13,7 @@ export class FollowsService {
     });
   }
 
-  async findUsers(userId: string, { cursor, take }: PaginationDto) {
+  async findFollowers(userId: string, { cursor, take }: PaginationDto) {
     const follows = await this.prismaService.follow.findMany({
       where: { followingId: userId },
       orderBy: { createdAt: 'desc' },
@@ -28,6 +27,35 @@ export class FollowsService {
       select: {
         id: true,
         follower: {
+          select: {
+            id: true,
+            username: true,
+          },
+        },
+      },
+    });
+    const hasNext = follows.length > take;
+    if (hasNext) follows.pop();
+    return {
+      data: follows,
+      nextCursor: hasNext ? follows[follows.length - 1].id : null,
+    };
+  }
+
+  async findFollowings(userId: string, { cursor, take }: PaginationDto) {
+    const follows = await this.prismaService.follow.findMany({
+      where: { followerId: userId },
+      orderBy: { createdAt: 'desc' },
+      take: take + 1,
+      ...(cursor && {
+        cursor: {
+          id: cursor,
+        },
+        skip: 1,
+      }),
+      select: {
+        id: true,
+        following: {
           select: {
             id: true,
             username: true,

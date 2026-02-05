@@ -2,34 +2,39 @@ import {
   Controller,
   Get,
   Post,
-  Body,
   Param,
   Delete,
   Query,
 } from '@nestjs/common';
 import { FollowsService } from './follows.service';
-import { CreateFollowDto } from './dto/create-follow.dto';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
+import { CurrentUser } from 'src/common/decorators/user.decorator';
+import { JwtPayload } from 'src/common/guards/jwt-auth.guard';
 
-@Controller('follows')
+@Controller()
 export class FollowsController {
   constructor(private readonly followsService: FollowsService) {}
 
-  @Post()
-  create(@Body() createFollowDto: CreateFollowDto) {
-    return this.followsService.create(createFollowDto);
+  @Post('follows')
+  create(@Param('userId') userId: string, @CurrentUser() currentUser: JwtPayload) {
+    return this.followsService.create({ followingId: userId, followerId: currentUser.sub });
   }
 
-  @Get('users')
-  findUsers(@Param('userId') userId: string, @Query() query: PaginationDto) {
-    return this.followsService.findUsers(userId, query);
+  @Get('followers')
+  findFollowers(@Param('userId') userId: string, @Query() query: PaginationDto) {
+    return this.followsService.findFollowers(userId, query);
   }
 
-  @Delete(':followerId/:followingId')
+  @Get('followings')
+  findFollowings(@Param('userId') userId: string, @Query() query: PaginationDto) {
+    return this.followsService.findFollowings(userId, query);
+  }
+
+  @Delete('follows')
   remove(
-    @Param('followerId') followerId: string,
-    @Param('followingId') followingId: string,
+    @Param('userId') userId: string,
+    @CurrentUser() currentUser: JwtPayload
   ) {
-    return this.followsService.remove(followerId, followingId);
+    return this.followsService.remove(currentUser.sub, userId);
   }
 }

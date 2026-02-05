@@ -14,6 +14,8 @@ import { UsersModule } from './modules/users/users.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { APP_GUARD } from '@nestjs/core';
 import { RolesGuard } from './common/guards/roles.guard';
+import { AssetsModule } from './modules/assets/assets.module';
+import { CaslModule } from './modules/casl/casl.module';
 
 @Module({
   imports: [
@@ -27,6 +29,8 @@ import { RolesGuard } from './common/guards/roles.guard';
     JobsModule,
     PostsModule,
     UsersModule,
+    AssetsModule,
+    CaslModule,
   ],
   providers: [
     {

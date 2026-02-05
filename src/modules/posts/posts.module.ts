@@ -21,7 +21,9 @@ import { PostLikesModule } from '../post-likes/post-likes.module';
           },
         ],
       },
-    ])
+    ]),
+    CommentsModule,
+    PostLikesModule,
   ],
   controllers: [PostsController],
   providers: [PostsService],
