@@ -49,7 +49,7 @@ export class PostsController {
   })
   @Patch(':id')
   update(@Param('id') id: string, @CurrentUser() user: JwtPayload, @Body() updatePostDto: UpdatePostDto) {
-    return this.postsService.update(id, user.sub, updatePostDto);
+    return this.postsService.update(id, { sub: user.sub, role: user.role }, updatePostDto);
   }
 
   @ApiOperation({
@@ -63,7 +63,7 @@ export class PostsController {
     description: 'Không tìm thấy bài viết',
   })
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.postsService.remove(id);
+  remove(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.postsService.remove(id, { sub: user.sub, role: user.role });
   }
 }

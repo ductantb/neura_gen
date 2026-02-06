@@ -1,7 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreatePostLikeDto } from './dto/create-post-like.dto';
 import { PrismaService } from 'src/database/prisma.service';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
+import { UserRole } from '@prisma/client';
 
 @Injectable()
 export class PostLikesService {
@@ -53,11 +54,25 @@ export class PostLikesService {
     };
   }
 
-  remove(userId: string, postId: string) {
+  async remove(postId: string, user: { sub: string, role: UserRole }) {
+    const postLike = await this.prismaService.postLike.findUnique({
+      where: {
+        userId_postId: {
+          userId: user.sub,
+          postId,
+        },
+      },
+    });
+
+    if (!postLike) throw new NotFoundException('Post like không tồn tại');
+
+    if (postLike.userId !== user.sub && user.role !== UserRole.ADMIN)
+      throw new ForbiddenException('Không có quyền xoá post like này');
+
     return this.prismaService.postLike.delete({
       where: {
         userId_postId: {
-          userId,
+          userId: user.sub,
           postId,
         },
       },

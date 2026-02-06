@@ -7,6 +7,7 @@ import { CreateCommentDto } from './dto/create-comment.dto';
 import { UpdateCommentDto } from './dto/update-comment.dto';
 import { PrismaService } from 'src/database/prisma.service';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
+import { UserRole } from '@prisma/client';
 
 @Injectable()
 export class CommentsService {
@@ -59,7 +60,7 @@ export class CommentsService {
     };
   }
 
-  async update(id: string, userId: string, dto: UpdateCommentDto) {
+  async update(id: string, user: { sub: string, role: UserRole }, dto: UpdateCommentDto) {
     const comment = await this.prismaService.comment.findUnique({
       where: { id },
     });
@@ -68,7 +69,7 @@ export class CommentsService {
       throw new NotFoundException('Comment không tồn tại');
     }
 
-    if (comment.userId !== userId) {
+    if (comment.userId !== user.sub && user.role !== UserRole.ADMIN) {
       throw new ForbiddenException('Không có quyền sửa comment này');
     }
 
@@ -78,7 +79,19 @@ export class CommentsService {
     });
   }
 
-  remove(id: string) {
+  async remove(id: string, user: { sub: string, role: UserRole }) {
+    const comment = await this.prismaService.comment.findUnique({
+      where: { id },
+    });
+
+    if (!comment) {
+      throw new NotFoundException('Comment không tồn tại');
+    }
+
+    if (comment.userId !== user.sub && user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('Không có quyền xoá comment này');
+    }
+
     return this.prismaService.comment.delete({
       where: { id },
     });

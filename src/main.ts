@@ -1,9 +1,18 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { ValidationPipe } from '@nestjs/common';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,               // Loại bỏ các trường không khai báo trong DTO
+      forbidNonWhitelisted: true,    // Báo lỗi 400 nếu user cố tình gửi trường lạ
+      transform: true,               // Tự động ép kiểu dữ liệu (ví dụ: string sang number)
+    }),
+  );
 
   const config = new DocumentBuilder()
     .setTitle('Neura Gen API')

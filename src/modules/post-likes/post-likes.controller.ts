@@ -1,10 +1,25 @@
-import { Controller, Get, Post, Body, Param, Delete, Query, Req } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Delete,
+  Query,
+  Req,
+} from '@nestjs/common';
 import { PostLikesService } from './post-likes.service';
 import { CreatePostLikeDto } from './dto/create-post-like.dto';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
 import { CurrentUser } from 'src/common/decorators/user.decorator';
 import { JwtPayload } from 'src/common/guards/jwt-auth.guard';
-import { ApiBearerAuth, ApiCreatedResponse, ApiOkResponse, ApiOperation } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiQuery,
+} from '@nestjs/swagger';
 
 @ApiBearerAuth('access-token')
 @Controller('post-likes')
@@ -19,7 +34,10 @@ export class PostLikesController {
     description: 'Like bài viết thành công',
   })
   @Post()
-  create(@CurrentUser() user: JwtPayload, @Body() createPostLikeDto: CreatePostLikeDto) {
+  create(
+    @CurrentUser() user: JwtPayload,
+    @Body() createPostLikeDto: CreatePostLikeDto,
+  ) {
     return this.postLikesService.create(user.sub, createPostLikeDto);
   }
 
@@ -30,11 +48,10 @@ export class PostLikesController {
   @ApiOkResponse({
     description: 'Lấy danh sách user thành công',
   })
+  @ApiQuery({ name: 'cursor', required: false, example: 1 })
+  @ApiQuery({ name: 'take', required: false, example: 10 })
   @Get()
-  findUsers(
-    @Param('postId') postId: string,
-    @Query() query: PaginationDto,
-  ) {
+  findUsers(@Param('postId') postId: string, @Query() query: PaginationDto) {
     return this.postLikesService.findUsers(postId, query);
   }
 
@@ -47,6 +64,9 @@ export class PostLikesController {
   })
   @Delete()
   remove(@Param('postId') postId: string, @CurrentUser() user: JwtPayload) {
-    return this.postLikesService.remove(user.sub, postId);
+    return this.postLikesService.remove(postId, {
+      sub: user.sub,
+      role: user.role,
+    });
   }
 }
