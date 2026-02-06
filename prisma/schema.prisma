@@ -154,7 +154,6 @@ model Post {
   assetVersion   AssetVersion @relation(fields: [assetVersionId], references: [id])
   user           User         @relation(fields: [userId], references: [id])
   likes          PostLike[]
-  views          PostView[]
 }
 
 model PostLike {
@@ -176,16 +175,6 @@ model Comment {
   createdAt DateTime @default(now())
   post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-model PostView {
-  id        String   @id @default(uuid())
-  userId    String?
-  postId    String
-  createdAt DateTime @default(now())
-  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, postId])
 }
 
 model Follow {

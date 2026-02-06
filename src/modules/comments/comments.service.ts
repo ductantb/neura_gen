@@ -15,17 +15,16 @@ export class CommentsService {
 
   create(userId: string, createCommentDto: CreateCommentDto) {
     return this.prismaService.$transaction(async (prisma) => {
-      const comment = await prisma.comment.create({
+      await prisma.post.update({
+        where: { id: createCommentDto.postId },
+        data: { commentCount: { increment: 1 } },
+      });
+      return prisma.comment.create({
         data: {
           ...createCommentDto,
           userId,
         },
       });
-      await prisma.post.update({
-        where: { id: createCommentDto.postId },
-        data: { commentCount: { increment: 1 } },
-      });
-      return comment;
     });
   }
 
@@ -92,8 +91,14 @@ export class CommentsService {
       throw new ForbiddenException('Không có quyền xoá comment này');
     }
 
-    return this.prismaService.comment.delete({
-      where: { id },
+    return this.prismaService.$transaction(async (prisma) => {
+      await prisma.post.update({
+        where: { id: comment.postId },
+        data: { commentCount: { decrement: 1 } },
+      });
+      return prisma.comment.delete({
+        where: { id },
+      });
     });
   }
 }

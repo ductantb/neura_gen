@@ -1,10 +1,26 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Delete,
+  Req,
+} from '@nestjs/common';
 import { PostsService } from './posts.service';
 import { CreatePostDto } from './dto/create-post.dto';
 import { UpdatePostDto } from './dto/update-post.dto';
-import { ApiBearerAuth, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiNotFoundResponse,
+  ApiOkResponse,
+  ApiOperation,
+} from '@nestjs/swagger';
 import { CurrentUser } from 'src/common/decorators/user.decorator';
 import { JwtPayload } from 'src/common/guards/jwt-auth.guard';
+import type { Request } from 'express';
 
 @ApiBearerAuth('access-token')
 @Controller('posts')
@@ -19,7 +35,10 @@ export class PostsController {
     description: 'Tạo bài viết thành công',
   })
   @Post()
-  create(@CurrentUser() user: JwtPayload, @Body() createPostDto: CreatePostDto){
+  create(
+    @CurrentUser() user: JwtPayload,
+    @Body() createPostDto: CreatePostDto,
+  ) {
     return this.postsService.create(user.sub, createPostDto);
   }
 
@@ -36,7 +55,26 @@ export class PostsController {
     description: 'Lấy bài viết thành công',
   })
   @Get(':id')
-  findOne(@Param('id') id: string) {
+  async findOne(
+    @Param('id') id: string,
+    @Req() req: Request,
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    // Xử lý x-forwarded-for để lấy IP đầu tiên trong danh sách
+    const forwarded = req.headers['x-forwarded-for'];
+    const rawIp =
+      typeof forwarded === 'string'
+        ? forwarded.split(',')[0]
+        : req.ip || req.socket.remoteAddress;
+
+    const userAgent = req.headers['user-agent'] || '';
+
+    if (!rawIp) {
+      return this.postsService.findOne(id);
+    }
+
+    await this.postsService.trackView(id, rawIp, userAgent, user?.sub);
+
     return this.postsService.findOne(id);
   }
 
@@ -48,8 +86,16 @@ export class PostsController {
     description: 'Cập nhật bài viết thành công',
   })
   @Patch(':id')
-  update(@Param('id') id: string, @CurrentUser() user: JwtPayload, @Body() updatePostDto: UpdatePostDto) {
-    return this.postsService.update(id, { sub: user.sub, role: user.role }, updatePostDto);
+  update(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() updatePostDto: UpdatePostDto,
+  ) {
+    return this.postsService.update(
+      id,
+      { sub: user.sub, role: user.role },
+      updatePostDto,
+    );
   }
 
   @ApiOperation({
