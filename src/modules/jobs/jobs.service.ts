@@ -1,18 +1,15 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { JobStatus, JobType } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { Queue } from 'bullmq';
-import IORedis from 'ioredis';
-
-const connection = new IORedis(process.env.REDIS_URL!, {
-  maxRetriesPerRequest: null,
-  enableReadyCheck: false,
-});
-const videoQueue = new Queue('video-gen', { connection });
+import { VIDEO_QUEUE } from './jobs.module';
 
 @Injectable()
 export class JobsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(VIDEO_QUEUE) private readonly videoQueue: Queue,
+  ) {}
 
   async createVideoJob(userId: string, prompt: string) {
     const job = await this.prisma.generateJob.create({
@@ -34,7 +31,7 @@ export class JobsService {
       },
     });
 
-    await videoQueue.add(
+    await this.videoQueue.add(
       'generate',
       { jobId: job.id },
       { attempts: 2 },

@@ -1,7 +1,10 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import { hashPassword, comparePassword } from '../../utils/hash';
+import { JwtPayload } from 'src/common/guards/jwt-auth.guard';
+import { AuthResponseDto } from './dto/auth-response.dto';
+import { ChangePasswordResponseDto } from './dto/change-password.dto';
 
 @Injectable()
 export class AuthService {
@@ -10,23 +13,31 @@ export class AuthService {
     private jwtService: JwtService,
   ) {}
 
-  async register(email: string, password: string) {
+  async register(email: string, password: string): Promise<AuthResponseDto> {
     const hashed = await hashPassword(password);
 
     const user = await this.prisma.user.create({
       data: {
         email,
         password: hashed,
+        username: email.split('@')[0],
       },
     });
 
     return {
-      id: user.id,
+      userId: user.id,
       email: user.email,
+      username: user.username,
+      accessToken: this.jwtService.sign({
+        sub: user.id,
+        email: user.email,
+        username: user.username,
+        role: user.role,
+      }),
     };
   }
 
-  async login(email: string, password: string) {
+  async login(email: string, password: string): Promise<AuthResponseDto> {
     const user = await this.prisma.user.findUnique({
       where: { email },
     });
@@ -40,25 +51,48 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const payload = {
+    const payload: JwtPayload = {
       sub: user.id,
       email: user.email,
+      username: user.username,
       role: user.role,
     };
 
     return {
+      userId: user.id,
+      username: user.username,
+      email: user.email,
       accessToken: this.jwtService.sign(payload),
     };
   }
 
-  async getMe(userId: string) {
-    return this.prisma.user.findUnique({
+  async changePassword(
+    userId: string,
+    oldPassword: string,
+    newPassword: string,
+  ): Promise<ChangePasswordResponseDto> {
+    const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: {
-        id: true,
-        email: true,
-        role: true,
-      },
+      select: { password: true },
     });
+
+    if (!user) {
+      throw new ForbiddenException('User not found');
+    }
+
+    const isMatch = await comparePassword(oldPassword, user.password);
+
+    if (!isMatch) {
+      throw new ForbiddenException('Old password is incorrect');
+    }
+
+    const hashed = await hashPassword(newPassword);
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { password: hashed },
+    });
+
+    return { message: 'Password changed successfully' };
   }
 }
