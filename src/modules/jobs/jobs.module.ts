@@ -4,9 +4,7 @@ import { JobsController } from './jobs.controller';
 import { JobsService } from './jobs.service';
 import { Redis } from 'ioredis';
 import { Queue } from 'bullmq';
-import { REDIS_CLIENT } from 'src/database/redis.module';
-
-export const VIDEO_QUEUE = Symbol('VIDEO_QUEUE');
+import { REDIS_CLIENT, VIDEO_QUEUE } from 'src/common/constants';
 
 @Module({
   imports: [HttpModule],

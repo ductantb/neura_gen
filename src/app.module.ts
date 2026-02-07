@@ -3,7 +3,6 @@ import { AuthModule } from './modules/auth/auth.module';
 import { PrismaModule } from './database/prisma.module';
 import { ModalModule } from './modules/modal/modal.module';
 import { ConfigModule } from '@nestjs/config';
-import { JobsController } from './modules/jobs/jobs.controller';
 import { JobsModule } from './modules/jobs/jobs.module';
 import { PostsModule } from './modules/posts/posts.module';
 import { UsersModule } from './modules/users/users.module';
@@ -13,6 +12,8 @@ import { RolesGuard } from './common/guards/roles.guard';
 import { AssetsModule } from './modules/assets/assets.module';
 import { RedisModule } from './database/redis.module';
 import { ScheduleModule } from '@nestjs/schedule';
+import { GalleryModule } from './modules/gallery/gallery.module';
+import { ExploreModule } from './modules/explore/explore.module';
 
 @Module({
   imports: [
@@ -29,6 +30,8 @@ import { ScheduleModule } from '@nestjs/schedule';
     PostsModule,
     UsersModule,
     AssetsModule,
+    GalleryModule,
+    ExploreModule,
   ],
   providers: [
     {
@@ -40,6 +43,5 @@ import { ScheduleModule } from '@nestjs/schedule';
       useClass: RolesGuard,
     },
   ],
-  controllers: [JobsController],
 })
 export class AppModule {}
