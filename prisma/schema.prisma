@@ -63,10 +63,10 @@ model GenerateJob {
 
 model Asset {
   id        String         @id @default(uuid())
-  jobId     String
+  jobId     String?
   type      AssetType
   createdAt DateTime       @default(now())
-  job       GenerateJob    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  job       GenerateJob?    @relation(fields: [jobId], references: [id], onDelete: Cascade)
   versions  AssetVersion[]
 }
 

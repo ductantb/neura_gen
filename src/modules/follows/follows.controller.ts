@@ -20,7 +20,7 @@ export class FollowsController {
   @ApiOperation({ summary: 'Theo dõi một user' })
   @Post('follows')
   create(@Param('userId') userId: string, @CurrentUser() currentUser: JwtPayload) {
-    return this.followsService.create({ followingId: userId, followerId: currentUser.sub });
+    return this.followsService.create(currentUser.sub, { followingId: userId });
   }
 
   @ApiOperation({ summary: 'Danh sách followers của user' })

@@ -8,9 +8,12 @@ import { UserRole } from '@prisma/client';
 export class FollowsService {
   constructor(private readonly prismaService: PrismaService) {}
 
-  create(createFollowDto: CreateFollowDto) {
+  create(userId: string, createFollowDto: CreateFollowDto) {
     return this.prismaService.follow.create({
-      data: createFollowDto,
+      data: {
+        ...createFollowDto,
+        followerId: userId,
+      },
     });
   }
 

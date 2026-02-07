@@ -2,7 +2,7 @@ import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { JobStatus, JobType } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { Queue } from 'bullmq';
-import { VIDEO_QUEUE } from './jobs.module';
+import { VIDEO_QUEUE } from 'src/common/constants';
 
 @Injectable()
 export class JobsService {

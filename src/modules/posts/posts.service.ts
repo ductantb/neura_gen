@@ -11,7 +11,7 @@ import { UserRole } from '@prisma/client';
 import Redis from 'ioredis';
 import { createHash } from 'crypto';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { REDIS_CLIENT } from 'src/database/redis.module';
+import { REDIS_CLIENT } from 'src/common/constants';
 
 @Injectable()
 export class PostsService {
