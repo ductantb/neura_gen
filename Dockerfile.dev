@@ -1,0 +1,18 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install deps first (cache)
+COPY package*.json ./
+RUN npm ci
+
+# Copy source
+COPY . .
+
+# Prisma client (nếu bạn dùng prisma generate)
+RUN npx prisma generate
+
+EXPOSE 3000
+
+# Nest dev (watch)
+CMD ["npm", "run", "start:dev"]
