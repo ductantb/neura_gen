@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { CreatePostDto } from './dto/create-post.dto';
 import { UpdatePostDto } from './dto/update-post.dto';
-import { PrismaService } from 'src/database/prisma.service';
+import { PrismaService } from 'src/infra/prisma/prisma.service';
 import { UserRole } from '@prisma/client';
 import Redis from 'ioredis';
 import { createHash } from 'crypto';

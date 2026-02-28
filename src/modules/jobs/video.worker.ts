@@ -5,7 +5,7 @@ import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { PrismaService } from '../../database/prisma.service';
+import { PrismaService } from '../../infra/prisma/prisma.service';
 
 const prisma = new PrismaService();
 const connection = new IORedis(process.env.REDIS_URL!, {
