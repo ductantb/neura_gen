@@ -1,0 +1,75 @@
+#version: "3.8"
+
+services:
+  db:
+    image: postgres:15
+    container_name: neura_gen_db
+    environment:
+      POSTGRES_USER: neuragen_user
+      POSTGRES_PASSWORD: 299792458
+      POSTGRES_DB: neura_gen
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U neuragen_user -d neura_gen"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: app_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: ..
+      dockerfile: Dockerfile.dev
+    container_name: app_api
+    env_file:
+      - ../.env
+    environment:
+      - RUN_WORKER=false
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+      - /app/node_modules
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ..
+      dockerfile: Dockerfile.dev
+    container_name: app_worker
+    env_file:
+      - ../.env
+    environment:
+      - RUN_WORKER=true
+    volumes:
+      - .:/app
+      - /app/node_modules
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["npm", "run", "worker:dev"]
+
+volumes:
+  pgdata:
+  redisdata:
