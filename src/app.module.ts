@@ -14,6 +14,8 @@ import { RedisModule } from './infra/redis/redis.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { GalleryModule } from './modules/gallery/gallery.module';
 import { ExploreModule } from './modules/explore/explore.module';
+import { WorkersModule } from './workers/workers.module';
+import { QueueModule } from './infra/queue/queue.module';
 
 @Module({
   imports: [
@@ -32,6 +34,8 @@ import { ExploreModule } from './modules/explore/explore.module';
     AssetsModule,
     GalleryModule,
     ExploreModule,
+    QueueModule,
+    WorkersModule,
   ],
   providers: [
     {

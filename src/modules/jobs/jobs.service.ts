@@ -34,7 +34,13 @@ export class JobsService {
     await this.videoQueue.add(
       'generate',
       { jobId: job.id },
-      { attempts: 2 },
+      {
+        jobId: job.id, // giúp trace cực dễ
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 3000 },
+        removeOnComplete: true,
+        removeOnFail: false,
+      },
     );
 
     return {
