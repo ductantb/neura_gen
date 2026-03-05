@@ -33,5 +33,7 @@ export class AuthResponseDto {
     example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
     required: true,
   })
+  @IsNotEmpty()
+  @IsString()
   accessToken: string;
 }
