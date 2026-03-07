@@ -1,5 +1,8 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { CreatePostLikeDto } from './dto/create-post-like.dto';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from 'src/database/prisma.service';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
 import { UserRole } from '@prisma/client';
@@ -8,16 +11,19 @@ import { UserRole } from '@prisma/client';
 export class PostLikesService {
   constructor(private readonly prismaService: PrismaService) {}
 
-  create(userId: string, createPostLikeDto: CreatePostLikeDto) {
+  create(userId: string, postId: string) {
     return this.prismaService.$transaction(async (prisma) => {
       const postLike = await prisma.postLike.create({
         data: {
-          ...createPostLikeDto,
           userId,
+          postId,
+        },
+        select: {
+          id: true,
         },
       });
       await prisma.post.update({
-        where: { id: createPostLikeDto.postId },
+        where: { id: postId },
         data: { likeCount: { increment: 1 } },
       });
       return postLike;
@@ -54,7 +60,7 @@ export class PostLikesService {
     };
   }
 
-  async remove(postId: string, user: { sub: string, role: UserRole }) {
+  async remove(postId: string, user: { sub: string; role: UserRole }) {
     const postLike = await this.prismaService.postLike.findUnique({
       where: {
         userId_postId: {
@@ -69,12 +75,22 @@ export class PostLikesService {
     if (postLike.userId !== user.sub && user.role !== UserRole.ADMIN)
       throw new ForbiddenException('Không có quyền xoá post like này');
 
+    await this.prismaService.post.update({
+      where: { id: postId },
+      data: {
+        likeCount: { decrement: 1 },
+      },
+    });
+
     return this.prismaService.postLike.delete({
       where: {
         userId_postId: {
           userId: user.sub,
           postId,
         },
+      },
+      select: {
+        id: true,
       },
     });
   }

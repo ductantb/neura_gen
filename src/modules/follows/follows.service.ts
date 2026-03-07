@@ -1,5 +1,4 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { CreateFollowDto } from './dto/create-follow.dto';
 import { PrismaService } from 'src/database/prisma.service';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
 import { UserRole } from '@prisma/client';
@@ -8,11 +7,28 @@ import { UserRole } from '@prisma/client';
 export class FollowsService {
   constructor(private readonly prismaService: PrismaService) {}
 
-  create(userId: string, createFollowDto: CreateFollowDto) {
+  async create(userId: string, followingId: string) {
+    if (userId === followingId)
+      throw new ForbiddenException('Không thể follow chính mình');
+
+    const existing = await this.prismaService.follow.findUnique({
+      where: {
+        followerId_followingId: {
+          followerId: userId,
+          followingId,
+        },
+      },
+    });
+
+    if (existing) return { id: existing.id };
+
     return this.prismaService.follow.create({
       data: {
-        ...createFollowDto,
         followerId: userId,
+        followingId,
+      },
+      select: {
+        id: true,
       },
     });
   }
@@ -96,6 +112,9 @@ export class FollowsService {
           followerId: user.followerId,
           followingId,
         },
+      },
+      select: {
+        id: true,
       },
     });
   }

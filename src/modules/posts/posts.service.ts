@@ -26,6 +26,9 @@ export class PostsService {
         ...createPostDto,
         userId,
       },
+      select: {
+        id: true,
+      }
     });
   }
 
@@ -36,7 +39,13 @@ export class PostsService {
   findOne(id: string) {
     return this.prismaService.post.findUnique({
       where: { id },
-      include: {
+      select: {
+        id: true,
+        caption: true,
+        viewCount: true,
+        commentCount: true,
+        likeCount: true,
+        createdAt: true,
         user: {
           select: {
             id: true,
@@ -71,6 +80,9 @@ export class PostsService {
     return this.prismaService.post.update({
       where: { id },
       data: updatePostDto,
+      select: {
+        id: true,
+      },
     });
   }
 
@@ -86,6 +98,9 @@ export class PostsService {
 
     return this.prismaService.post.delete({
       where: { id },
+      select: {
+        id: true,
+      },
     });
   }
 
@@ -111,7 +126,7 @@ export class PostsService {
 
     if (!result) return false;
 
-    const isNewView = result[0][1] === 'OK';
+    const isNewView = result === 'OK';
 
     if (isNewView) {
       await this.redis.hincrby('post:views:buffer', postId, 1);

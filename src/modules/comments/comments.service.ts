@@ -13,16 +13,20 @@ import { UserRole } from '@prisma/client';
 export class CommentsService {
   constructor(private readonly prismaService: PrismaService) {}
 
-  create(userId: string, createCommentDto: CreateCommentDto) {
+  create(userId: string, postId: string, createCommentDto: CreateCommentDto) {
     return this.prismaService.$transaction(async (prisma) => {
       await prisma.post.update({
-        where: { id: createCommentDto.postId },
+        where: { id: postId },
         data: { commentCount: { increment: 1 } },
       });
       return prisma.comment.create({
         data: {
           ...createCommentDto,
           userId,
+          postId,
+        },
+        select: {
+          id: true,
         },
       });
     });
@@ -75,6 +79,9 @@ export class CommentsService {
     return this.prismaService.comment.update({
       where: { id },
       data: dto,
+      select: {
+        id: true,
+      },
     });
   }
 
@@ -98,6 +105,9 @@ export class CommentsService {
       });
       return prisma.comment.delete({
         where: { id },
+        select: {
+          id: true,
+        },
       });
     });
   }
