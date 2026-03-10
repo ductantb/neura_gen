@@ -11,6 +11,7 @@ export class UsersService {
       where: { id },
       select: {
         id: true,
+        email: true,
         username: true,
         avatarUrl: true,
         bio: true,
