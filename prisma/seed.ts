@@ -12,8 +12,8 @@ const prisma = new PrismaClient();
 
 // ✅ Seed keys để chạy nhiều lần không trùng
 const SEED = {
-  userEmail: 'test@neura.ai',
-  userPassword: '123456',
+  userEmail: 'test@gmail.com',
+  userPassword: '12345678',
   username: 'testuser',
   jobSeedKey: 'seed:v1:job:image_to_video:cyberpunk_city',
   assetVersionSeedKey: 'seed:v1:asset_version:video:sample_mp4',

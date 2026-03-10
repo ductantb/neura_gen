@@ -7,5 +7,6 @@ import { ModalController } from './modal.controller';
   imports: [HttpModule],
   providers: [ModalService],
   controllers: [ModalController],
+  exports: [ModalService],
 })
 export class ModalModule {}

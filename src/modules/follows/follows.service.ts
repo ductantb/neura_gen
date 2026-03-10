@@ -1,6 +1,6 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreateFollowDto } from './dto/create-follow.dto';
-import { PrismaService } from 'src/database/prisma.service';
+import { PrismaService } from 'src/infra/prisma/prisma.service';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
 import { UserRole } from '@prisma/client';
 

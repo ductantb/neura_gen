@@ -1,6 +1,6 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { JobStatus, JobType } from '@prisma/client';
-import { PrismaService } from '../../database/prisma.service';
+import { PrismaService } from '../../infra/prisma/prisma.service';
 import { Queue } from 'bullmq';
 import { VIDEO_QUEUE } from 'src/common/constants';
 
@@ -34,7 +34,13 @@ export class JobsService {
     await this.videoQueue.add(
       'generate',
       { jobId: job.id },
-      { attempts: 2 },
+      {
+        jobId: job.id, 
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 3000 },
+        removeOnComplete: true,
+        removeOnFail: false,
+      },
     );
 
     return {

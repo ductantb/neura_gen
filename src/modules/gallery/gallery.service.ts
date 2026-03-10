@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { CreateGalleryDto } from './dto/create-gallery.dto';
 import { UpdateGalleryDto } from './dto/update-gallery.dto';
-import { PrismaService } from 'src/database/prisma.service';
+import { PrismaService } from 'src/infra/prisma/prisma.service';
 
 @Injectable()
 export class GalleryService {
