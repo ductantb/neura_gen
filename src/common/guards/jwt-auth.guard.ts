@@ -5,6 +5,7 @@ import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { UserRole } from '@prisma/client';
 
 export class JwtPayload {
+  //id: string;
   sub: string;
   email: string;
   username: string;

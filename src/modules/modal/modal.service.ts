@@ -39,4 +39,8 @@ export class ModalService {
     }
     throw new Error('Modal returned no video');
   }
+
+  async smokeTest() {
+    return await this.generateVideo({ prompt: 'smoke test' });
+  }
 }

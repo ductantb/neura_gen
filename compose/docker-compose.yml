@@ -34,7 +34,7 @@ services:
   api:
     build:
       context: ..
-      dockerfile: Dockerfile.dev
+      dockerfile: docker/Dockerfile.dev
     container_name: app_api
     env_file:
       - ../.env
@@ -43,7 +43,7 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - .:/app
+      - ..:/app
       - /app/node_modules
     depends_on:
       db:
@@ -54,14 +54,14 @@ services:
   worker:
     build:
       context: ..
-      dockerfile: Dockerfile.dev
+      dockerfile: docker/Dockerfile.dev
     container_name: app_worker
     env_file:
       - ../.env
     environment:
       - RUN_WORKER=true
     volumes:
-      - .:/app
+      - ..:/app
       - /app/node_modules
     depends_on:
       db:
