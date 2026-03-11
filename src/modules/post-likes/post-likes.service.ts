@@ -30,6 +30,19 @@ export class PostLikesService {
     });
   }
 
+  async isLiked(postId: string, userId?: string) {
+    if (!userId) return false;
+
+    const count = await this.prismaService.postLike.count({
+      where: {
+        userId,
+        postId,
+      },
+    });
+
+    return count > 0;
+  }
+
   async findUsers(postId: string, { cursor, take }: PaginationDto) {
     const postLikes = await this.prismaService.postLike.findMany({
       where: { postId },

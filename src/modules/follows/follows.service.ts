@@ -1,4 +1,8 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from 'src/database/prisma.service';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
 import { UserRole } from '@prisma/client';
@@ -31,6 +35,19 @@ export class FollowsService {
         id: true,
       },
     });
+  }
+
+  async isFollowed(followingId: string, userId?: string) {
+    if (!userId) return false;
+
+    const count = await this.prismaService.follow.count({
+      where: {
+        followerId: userId,
+        followingId,
+      },
+    });
+
+    return count > 0;
   }
 
   async findFollowers(userId: string, { cursor, take }: PaginationDto) {
@@ -91,7 +108,10 @@ export class FollowsService {
     };
   }
 
-  async remove(user: { followerId: string, role: UserRole }, followingId: string) {
+  async remove(
+    user: { followerId: string; role: UserRole },
+    followingId: string,
+  ) {
     const follow = await this.prismaService.follow.findUnique({
       where: {
         followerId_followingId: {

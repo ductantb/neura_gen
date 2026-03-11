@@ -50,6 +50,7 @@ export class PostsService {
           select: {
             id: true,
             username: true,
+            avatarUrl: true,
           },
         },
         assetVersion: {
