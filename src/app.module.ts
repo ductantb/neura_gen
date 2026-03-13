@@ -16,6 +16,7 @@ import { GalleryModule } from './modules/gallery/gallery.module';
 import { ExploreModule } from './modules/explore/explore.module';
 import { WorkersModule } from './workers/workers.module';
 import { QueueModule } from './infra/queue/queue.module';
+import { StorageModule } from './infra/storage/storage.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { QueueModule } from './infra/queue/queue.module';
     ExploreModule,
     QueueModule,
     WorkersModule,
+    StorageModule,
   ],
   providers: [
     {
