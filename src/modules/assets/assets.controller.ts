@@ -2,10 +2,16 @@ import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/commo
 import { AssetsService } from './assets.service';
 import { CreateAssetDto } from './dto/create-asset.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
+import { UseInterceptors, UploadedFile } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { StorageService } from '../../infra/storage/storage.service';
 
 @Controller('assets')
 export class AssetsController {
-  constructor(private readonly assetsService: AssetsService) {}
+  constructor(
+    private readonly assetsService: AssetsService,
+    private readonly storageService: StorageService,
+  ) {}
 
   @Post()
   create(@Body() createAssetDto: CreateAssetDto) {
@@ -31,4 +37,21 @@ export class AssetsController {
   remove(@Param('id') id: string) {
     return this.assetsService.remove(+id);
   }
+
+  @Post('upload')
+  @UseInterceptors(FileInterceptor('file'))
+  async upload(@UploadedFile() file: Express.Multer.File) {
+    return this.storageService.upload({
+      buffer: file.buffer,
+      mimeType: file.mimetype,
+      originalName: file.originalname,
+      folder: 'test',
+    });
+  }
+
+  @Get('signed-url/by-key/:key')
+  async getSignedUrl(@Param('key') key: string) {
+    return this.storageService.getDownloadSignedUrl(decodeURIComponent(key));
+  }
 }
+
