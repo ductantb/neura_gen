@@ -38,7 +38,8 @@ export class AssetsController {
     return this.assetsService.remove(+id);
   }
 
-  @Post('upload')
+  //test endpoint for uploading files to S3 and getting signed URLs, not part of the main CRUD operations for assets
+  @Post('upload-test')
   @UseInterceptors(FileInterceptor('file'))
   async upload(@UploadedFile() file: Express.Multer.File) {
     return this.storageService.upload({

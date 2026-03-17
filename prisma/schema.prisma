@@ -11,7 +11,7 @@ model User {
   id                 String              @id @default(uuid())
   email              String              @unique
   password           String
-  username           String              
+  username           String
   bio                String?
   avatarUrl          String?
   role               UserRole            @default(FREE)
@@ -26,6 +26,7 @@ model User {
   posts              Post[]
   likes              PostLike[]
   credits            UserCredit?
+  assets             Asset[]
 }
 
 model UserCredit {
@@ -55,38 +56,71 @@ model GenerateJob {
   status         JobStatus @default(PENDING)
   progress       Int       @default(0)
   extraConfig    Json?
+  provider       String?
+  externalJobId  String?
+  errorMessage   String?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  failedAt       DateTime?
   createdAt      DateTime  @default(now())
-  assets         Asset[]
-  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  logs           JobLog[]
+  updatedAt      DateTime  @updatedAt
+
+  assets Asset[]
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  logs   JobLog[]
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@index([type, createdAt])
 }
 
 model Asset {
-  id        String         @id @default(uuid())
-  jobId     String?
-  type      AssetType
-  createdAt DateTime       @default(now())
-  job       GenerateJob?    @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  versions  AssetVersion[]
+  id           String    @id @default(uuid())
+  userId       String
+  jobId        String?
+  type         AssetType
+  role         AssetRole
+  mimeType     String?
+  originalName String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  job      GenerateJob?   @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  versions AssetVersion[]
+
+  @@index([userId, createdAt])
+  @@index([jobId, role])
+  @@index([type, role])
 }
 
 model AssetVersion {
-  id           String        @id @default(uuid())
-  assetId      String
-  version      Int
-  fileUrl      String
-  seed         BigInt?
-  width        Int?
-  height       Int?
-  quality      String?
-  metadata     Json?
-  createdAt    DateTime      @default(now())
+  id              String          @id @default(uuid())
+  assetId         String
+  version         Int
+  storageProvider StorageProvider @default(S3)
+  bucket          String
+  objectKey       String
+  fileUrl         String?
+  originalName    String?
+  mimeType        String?
+  sizeBytes       Int?
+  seed            BigInt?
+  width           Int?
+  height          Int?
+  durationMs      Int?
+  quality         String?
+  metadata        Json?
+  createdAt       DateTime        @default(now())
+
   asset        Asset         @relation(fields: [assetId], references: [id], onDelete: Cascade)
   exploreItems ExploreItem[]
   galleries    GalleryItem[]
   posts        Post[]
 
   @@unique([assetId, version])
+  @@unique([bucket, objectKey])
+  @@index([assetId, createdAt])
 }
 
 model ExploreItem {
@@ -202,12 +236,28 @@ enum JobType {
 
 enum JobStatus {
   PENDING
-  RUNNING
-  DONE
+  QUEUED
+  PROCESSING
+  COMPLETED
   FAILED
+  CANCELLED
 }
 
 enum AssetType {
   IMAGE
   VIDEO
+  THUMBNAIL
+  AUDIO
+}
+
+enum AssetRole {
+  INPUT
+  OUTPUT
+  THUMBNAIL
+  PREVIEW
+  TEMP
+}
+
+enum StorageProvider {
+  S3
 }
