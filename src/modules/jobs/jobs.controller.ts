@@ -12,8 +12,8 @@ export class JobsController {
     @Body() body: { userId: string; prompt: string },
   ) {
     // log test bug
-    console.log('req.user =', req.user);
-    console.log('req.user.sub =', req.user?.sub);
+    //console.log('req.user =', req.user);
+    //console.log('req.user.sub =', req.user?.sub);
     return this.jobs.createVideoJob(req.user.sub, body.prompt);
   }
 

@@ -1,58 +1,43 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, BadRequestException, Req } from '@nestjs/common';
 import { AssetsService } from './assets.service';
 import { CreateAssetDto } from './dto/create-asset.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
 import { UseInterceptors, UploadedFile } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { StorageService } from '../../infra/storage/storage.service';
+import { UploadAssetDto } from './dto/upload-asset.dto';
 
 @Controller('assets')
 export class AssetsController {
-  constructor(
-    private readonly assetsService: AssetsService,
-    private readonly storageService: StorageService,
-  ) {}
+  constructor(private readonly assetsService: AssetsService) {}
 
-  @Post()
-  create(@Body() createAssetDto: CreateAssetDto) {
-    return this.assetsService.create(createAssetDto);
-  }
+  @Post('upload')
+  @UseInterceptors(FileInterceptor('file'))
+  async uploadAsset(
+    @Req() req,
+    @UploadedFile() file: Express.Multer.File,
+    @Body() dto: UploadAssetDto,
+  ) {
 
-  @Get()
-  findAll() {
-    return this.assetsService.findAll();
+    // log test bug
+    console.log(req.headers.authorization);
+    console.log('USER:', req.user);
+
+    const userId = req.user?.sub; // Assuming you have authentication and user info in the request
+    if (!userId) {
+      throw new BadRequestException('User ID is required');
+    }
+    return this.assetsService.uploadAsset(userId, file, dto);
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.assetsService.findOne(+id);
+  async getAsset(@Param('id') id: string) {
+    return this.assetsService.getAssetById(id);
   }
 
-  @Patch(':id')
-  update(@Param('id') id: string, @Body() updateAssetDto: UpdateAssetDto) {
-    return this.assetsService.update(+id, updateAssetDto);
+  @Get('download/:id')
+  async getDownloadSignedUrl(@Param('id') id: string) {
+    return this.assetsService.getDownloadSignedUrl(id);
   }
 
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.assetsService.remove(+id);
-  }
-
-  //test endpoint for uploading files to S3 and getting signed URLs, not part of the main CRUD operations for assets
-  @Post('upload-test')
-  @UseInterceptors(FileInterceptor('file'))
-  async upload(@UploadedFile() file: Express.Multer.File) {
-    return this.storageService.upload({
-      buffer: file.buffer,
-      mimeType: file.mimetype,
-      originalName: file.originalname,
-      folder: 'test',
-    });
-  }
-
-  @Get('signed-url/by-key/:key')
-  async getSignedUrl(@Param('key') key: string) {
-    return this.storageService.getDownloadSignedUrl(decodeURIComponent(key));
-  }
 }
-

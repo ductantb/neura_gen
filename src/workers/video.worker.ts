@@ -1,13 +1,14 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { Worker, Job } from 'bullmq';
 import { Redis } from 'ioredis';
-import { JobStatus, AssetType } from '@prisma/client';
+import { JobStatus, AssetType, AssetRole } from '@prisma/client';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-
+import { StorageService } from 'src/infra/storage/storage.service';
 import { PrismaService } from 'src/infra/prisma/prisma.service';
 import { ModalService } from 'src/modules/modal/modal.service';
+import { AssetsService } from 'src/modules/assets/assets.service';
 
 @Injectable()
 export class VideoWorker implements OnModuleDestroy {
@@ -16,6 +17,8 @@ export class VideoWorker implements OnModuleDestroy {
   constructor(
     private readonly prisma: PrismaService,
     private readonly modal: ModalService,
+    private readonly storageService: StorageService,
+    private readonly assetsService: AssetsService,
   ) {}
 
   private ensureDir(dir: string) {
@@ -49,11 +52,11 @@ export class VideoWorker implements OnModuleDestroy {
     // Optional logs
     this.worker.on('completed', (job) => {
       // eslint-disable-next-line no-console
-      console.log(`✅ Completed job ${job.id}`);
+      console.log(` Completed job ${job.id}`);
     });
     this.worker.on('failed', (job, err) => {
       // eslint-disable-next-line no-console
-      console.error(`❌ Failed job ${job?.id}`, err);
+      console.error(` Failed job ${job?.id}`, err);
     });
   }
 
@@ -66,18 +69,18 @@ export class VideoWorker implements OnModuleDestroy {
     if (!job) return;
 
     await this.log(jobId, 'Worker started');
-    await this.setStatus(jobId, JobStatus.RUNNING, 5);
+    await this.setStatus(jobId, JobStatus.PROCESSING, 5);
 
     // Call Modal (gom vào ModalService)
     await this.log(jobId, 'Calling Modal...');
     const modalRes = await this.modal.generateVideo({ prompt: job.prompt });
 
-    await this.setStatus(jobId, JobStatus.RUNNING, 60);
+    await this.setStatus(jobId, JobStatus.PROCESSING, 60);
 
     // Get video buffer (base64 hoặc url)
     const buffer = await this.modal.getVideoBuffer(modalRes);
 
-    await this.setStatus(jobId, JobStatus.RUNNING, 80);
+    await this.setStatus(jobId, JobStatus.PROCESSING, 80);
 
     // Save file (tạm local; sau này thay S3 ở đây)
     const dir = process.env.ASSET_STORAGE_DIR || 'public/generated';
@@ -85,7 +88,12 @@ export class VideoWorker implements OnModuleDestroy {
 
     const fileName = `${jobId}-${crypto.randomBytes(5).toString('hex')}.mp4`;
     const filePath = path.join(dir, fileName);
-    fs.writeFileSync(filePath, buffer);
+    const uploaded = await this.storageService.upload({
+      buffer,
+      mimeType: 'video/mp4',
+      originalName: `${job.prompt}.mp4`,
+      folder: `jobs/${jobId}/output`,
+    })
 
     const baseUrl =
       process.env.PUBLIC_ASSET_BASE_URL || 'http://localhost:3000/public';
@@ -95,14 +103,23 @@ export class VideoWorker implements OnModuleDestroy {
 
     // Asset + Version
     const asset = await this.prisma.asset.create({
-      data: { jobId, type: AssetType.VIDEO },
+      data: {
+        userId: job.userId,
+        jobId,
+        type: AssetType.VIDEO,
+        role: AssetRole.OUTPUT,
+      },
+
     });
 
     await this.prisma.assetVersion.create({
       data: {
         assetId: asset.id,
         version: 1,
-        fileUrl,
+        bucket: 'local',
+        objectKey: filePath,
+        mimeType: 'video/mp4',
+        sizeBytes: buffer.length,
         metadata: {
           prompt: job.prompt,
           modelName: job.modelName,
@@ -110,8 +127,8 @@ export class VideoWorker implements OnModuleDestroy {
       },
     });
 
-    await this.setStatus(jobId, JobStatus.DONE, 100);
-    await this.log(jobId, 'Job DONE');
+    await this.setStatus(jobId, JobStatus.COMPLETED, 100);
+    await this.log(jobId, 'Job completed successfully');
 
     return { fileUrl };
   }
