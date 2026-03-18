@@ -20,8 +20,8 @@ export class AssetsController {
   ) {
 
     // log test bug
-    console.log(req.headers.authorization);
-    console.log('USER:', req.user);
+    // console.log(req.headers.authorization);
+    // console.log('USER:', req.user);
 
     const userId = req.user?.sub; // Assuming you have authentication and user info in the request
     if (!userId) {
