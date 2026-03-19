@@ -1,5 +1,6 @@
-import { Body, Controller, Get, Param, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Req, BadRequestException } from '@nestjs/common';
 import { JobsService } from './jobs.service';
+import { CreateVideoJobDto } from './dto/create-job.dto';
 
 @Controller('jobs')
 export class JobsController {
@@ -7,19 +8,18 @@ export class JobsController {
 
   // POST /jobs/video
   @Post('video')
-  async createVideoJob(
-    @Req() req: any,
-    @Body() body: { userId: string; prompt: string },
-  ) {
-    // log test bug
-    //console.log('req.user =', req.user);
-    //console.log('req.user.sub =', req.user?.sub);
-    return this.jobs.createVideoJob(req.user.sub, body.prompt);
+  async createVideoJob(@Req() req, @Body() dto: CreateVideoJobDto) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new BadRequestException("User not authenticated");
+    }
+    return this.jobs.createVideoJob(userId, dto);
   }
 
   // GET /jobs/:id
   @Get(':id')
-  async getJob(@Param('id') id: string) {
+  async getJob(@Req() req, @Param('id') id: string) {
     return this.jobs.getJobWithAssets(id);
   }
+
 }

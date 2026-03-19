@@ -9,5 +9,5 @@ export class CreateVideoJobDto {
 
   @IsOptional()
   @IsString()
-  negetivePrompt?: string;
+  negativePrompt?: string;
 }

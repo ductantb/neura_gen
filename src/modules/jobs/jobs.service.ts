@@ -45,12 +45,73 @@ export class JobsService {
             data: {
                 userId,
                 type: JobType.IMAGE_TO_VIDEO,
-                status: JobStatus.QUEUED,
-                AssetId: dto.inputAssetId,
+                status: JobStatus.PENDING,
                 prompt: dto.prompt,
                 negativePrompt: dto.negativePrompt,
+                modelName: "default-model", 
+                turboEnabled: false,
+                progress : 0,
+                extraConfig: {
+                    inputAssetId: dto.inputAssetId,
+                },
+                assets: {
+                    connect: [{id: inputAsset.id}]
+                },
+                logs: { create: [
+                    {message: "Job created"},
+                    {message: `Input asset: ${inputAsset.id}`}
+                ] },
+
             },
         });
+
+        //attach jobId vào asset
+        await this.prisma.asset.update({
+            where: { id: inputAsset.id },
+            data: { jobId: job.id }
+        });
+
+        // set Queue
+        await this.prisma.generateJob.update({
+        where: { id: job.id },
+        data: {
+            status: JobStatus.QUEUED,
+            progress: 1,
+        },
+        });
+
+        // push to queue
+        await this.videoQueue.add("process-video-job", {
+            jobId: job.id,
+        }, {
+            jobId: job.id,
+            attempts: 3,
+            backoff: { type: "exponential", delay: 1000 }
+        });
+
+        return {
+            jobId: job.id,
+            status: JobStatus.QUEUED
+        };
+    }   
+    
+    async getJobWithAssets(id: string) {
+        const job = await this.prisma.generateJob.findUnique({
+        where: { id },
+        include: {
+            assets: {
+            include: {
+                versions: {
+                orderBy: { version: 'desc' },
+                take: 1,
+                },
+            },
+            },
+            logs: { orderBy: { createdAt: 'asc' } },
+        },
+        });
+
+        if (!job) throw new NotFoundException('Job not found');
         return job;
-    }    
+    }
 }
