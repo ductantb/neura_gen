@@ -81,7 +81,7 @@ export class JobsService {
         });
 
         // push to queue
-        await this.videoQueue.add("process-video-job", {
+        await this.videoQueue.add("generate-video", {
             jobId: job.id,
         }, {
             jobId: job.id,
