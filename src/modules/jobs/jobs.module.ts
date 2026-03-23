@@ -5,12 +5,14 @@ import { JobsService } from './jobs.service';
 import { Redis } from 'ioredis';
 import { Queue } from 'bullmq';
 import { REDIS_CLIENT, VIDEO_QUEUE } from 'src/common/constants';
+import { ModalService } from '../modal/modal.service';
 
 @Module({
   imports: [HttpModule],
   controllers: [JobsController],
   providers: [
     JobsService,
+    ModalService,
     {
       provide: VIDEO_QUEUE,
       useFactory: (redis: Redis) =>
