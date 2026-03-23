@@ -40,7 +40,8 @@ model CreditTransaction {
   id        String   @id @default(uuid())
   userId    String
   amount    Int
-  reason    String
+  reason    CreditReason          
+  metadata  Json?   
   createdAt DateTime @default(now())
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
@@ -55,6 +56,7 @@ model GenerateJob {
   turboEnabled   Boolean   @default(false)
   status         JobStatus @default(PENDING)
   progress       Int       @default(0)
+  creditCost     Int       @default(0)
   extraConfig    Json?
   provider       String?
   externalJobId  String?
@@ -260,4 +262,18 @@ enum AssetRole {
 
 enum StorageProvider {
   S3
+}
+
+enum CreditReason {
+  // earn
+  REGISTER_BONUS
+  ADMIN_TOPUP
+  TEST_REWARD
+
+  // spend
+  CREATE_IMAGE_TO_VIDEO_JOB
+
+  // refund
+  REFUND_FAILED_JOB
+  REFUND_CANCELED_JOB
 }

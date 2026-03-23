@@ -21,6 +21,17 @@ export class AuthService {
         email,
         password: hashed,
         username: email.split('@')[0],
+        credits: {
+          create: {
+            balance: 100, // default credits for new users
+          }
+        },
+        creditTransactions: {
+        create: {
+          amount: 100,
+          reason: 'REGISTER_BONUS',
+        },
+      },
       },
     });
 

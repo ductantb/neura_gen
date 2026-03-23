@@ -14,6 +14,9 @@ export class UsersService {
         username: true,
         avatarUrl: true,
         bio: true,
+        credits: {
+          select: {balance: true, updatedAt: true},
+        }
       },
     });
   }
