@@ -27,6 +27,29 @@ model User {
   likes              PostLike[]
   credits            UserCredit?
   assets             Asset[]
+
+  refreshSessions RefreshSession[]
+}
+
+model RefreshSession {
+  id          String    @id @default(uuid())
+  userId      String
+  hashedToken String
+  expiresAt   DateTime
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  lastUsedAt  DateTime?
+  revokedAt   DateTime?
+
+  userAgent  String?
+  ipAddress  String?
+  deviceName String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
 }
 
 model UserCredit {
@@ -37,13 +60,13 @@ model UserCredit {
 }
 
 model CreditTransaction {
-  id        String   @id @default(uuid())
+  id        String       @id @default(uuid())
   userId    String
   amount    Int
-  reason    CreditReason          
-  metadata  Json?   
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reason    CreditReason
+  metadata  Json?
+  createdAt DateTime     @default(now())
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model GenerateJob {

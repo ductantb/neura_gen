@@ -9,11 +9,12 @@ export class JwtPayload {
   email: string;
   username: string;
   role: UserRole;
+  sid?: string;
 }
 
 @Injectable()
 export class JwtAuthGuard extends AuthGuard('jwt') {
-    constructor(private reflector: Reflector) {
+  constructor(private reflector: Reflector) {
     super();
   }
 
