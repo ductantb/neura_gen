@@ -142,6 +142,10 @@ export interface GenerateVideoInput {
   prompt: string;
   negativePrompt?: string;
   inputImageUrl: string;
+  jobId?: string;
+  provider?: string;
   modelName?: string;
+  presetId?: string;
   userId?: string;
+  workflow?: string;
 }
