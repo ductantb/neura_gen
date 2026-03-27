@@ -11,8 +11,24 @@ MODEL_CACHE_DIR = "/cache"
 MODEL_ID = "Lightricks/LTX-Video"
 LTX_PREVIEW_MODEL_NAME = "ltx-video-i2v-preview"
 LTX_PREVIEW_PRESET_ID = "preview_ltx_i2v"
+TARGET_WIDTH = 832
+TARGET_HEIGHT = 480
+NUM_FRAMES = 121
+NUM_INFERENCE_STEPS = 40
+GUIDANCE_SCALE = 3.5
+VIDEO_FPS = 24
 DEFAULT_NEGATIVE_PROMPT = (
     "worst quality, low quality, blurry, jittery, distorted, deformed, flicker"
+)
+MOTION_NEGATIVE_PROMPT = (
+    "static frame, still image, frozen scene, no motion, almost no movement, "
+    "broken motion, jumpy animation, inconsistent temporal motion"
+)
+MOTION_PROMPT_SUFFIX = (
+    "The scene has clear visible motion and natural temporal progression. "
+    "The subject moves in a believable way. "
+    "The camera has gentle cinematic movement with subtle parallax. "
+    "Motion is coherent across frames and the result should not look like a still image."
 )
 
 cache_volume = modal.Volume.from_name("neura-video-model-cache", create_if_missing=True)
@@ -94,6 +110,18 @@ def _seed_from_job(job_id: str | None) -> int:
     return int(digest[:8], 16)
 
 
+def _build_prompt(prompt: str) -> str:
+    return f"{prompt.strip()}. {MOTION_PROMPT_SUFFIX}"
+
+
+def _build_negative_prompt(negative_prompt: str | None) -> str:
+    parts = [DEFAULT_NEGATIVE_PROMPT, MOTION_NEGATIVE_PROMPT]
+    if negative_prompt:
+        parts.insert(0, negative_prompt.strip())
+
+    return ", ".join(part for part in parts if part)
+
+
 def _load_pipeline():
     global _PIPELINE
 
@@ -120,13 +148,19 @@ def _load_pipeline():
 
 def _load_input_image(image_url: str):
     import requests
-    from PIL import Image
+    from PIL import Image, ImageOps
 
     response = requests.get(image_url, timeout=60)
     response.raise_for_status()
 
     image = Image.open(BytesIO(response.content))
-    return image.convert("RGB")
+    image = image.convert("RGB")
+    return ImageOps.fit(
+        image,
+        (TARGET_WIDTH, TARGET_HEIGHT),
+        method=Image.Resampling.LANCZOS,
+        centering=(0.5, 0.5),
+    )
 
 
 @app.function(
@@ -136,6 +170,30 @@ def _load_input_image(image_url: str):
     volumes={MODEL_CACHE_DIR: cache_volume},
 )
 def generate_video_core(
+    prompt: str,
+    job_id: str | None = None,
+    negative_prompt: str | None = None,
+    input_image_url: str | None = None,
+    provider: str | None = None,
+    model_name: str | None = None,
+    preset_id: str | None = None,
+    user_id: str | None = None,
+    workflow: str | None = None,
+):
+    return _generate_video_response(
+        prompt=prompt,
+        job_id=job_id,
+        negative_prompt=negative_prompt,
+        input_image_url=input_image_url,
+        provider=provider,
+        model_name=model_name,
+        preset_id=preset_id,
+        user_id=user_id,
+        workflow=workflow,
+    )
+
+
+def _generate_video_response(
     prompt: str,
     job_id: str | None = None,
     negative_prompt: str | None = None,
@@ -157,15 +215,15 @@ def generate_video_core(
 
     result = pipe(
         image=image,
-        prompt=prompt,
-        negative_prompt=negative_prompt or DEFAULT_NEGATIVE_PROMPT,
-        width=704,
-        height=480,
-        num_frames=81,
-        num_inference_steps=30,
+        prompt=_build_prompt(prompt),
+        negative_prompt=_build_negative_prompt(negative_prompt),
+        width=TARGET_WIDTH,
+        height=TARGET_HEIGHT,
+        num_frames=NUM_FRAMES,
+        num_inference_steps=NUM_INFERENCE_STEPS,
         decode_timestep=0.05,
         decode_noise_scale=0.025,
-        guidance_scale=3.0,
+        guidance_scale=GUIDANCE_SCALE,
         generator=generator,
     )
     frames = result.frames[0]
@@ -174,7 +232,7 @@ def generate_video_core(
         output_path = tmp.name
 
     try:
-        export_to_video(frames, output_path, fps=16)
+        export_to_video(frames, output_path, fps=VIDEO_FPS)
         with open(output_path, "rb") as video_file:
             encoded_video = base64.b64encode(video_file.read()).decode("utf-8")
     finally:
@@ -194,16 +252,29 @@ def generate_video_core(
         "user_id": user_id,
         "workflow": workflow or "I2V",
         "video_base64": encoded_video,
+        "generation_config": {
+            "width": TARGET_WIDTH,
+            "height": TARGET_HEIGHT,
+            "num_frames": NUM_FRAMES,
+            "num_inference_steps": NUM_INFERENCE_STEPS,
+            "guidance_scale": GUIDANCE_SCALE,
+            "fps": VIDEO_FPS,
+        },
         "debug_version": "modal_ltx_preview_v1",
     }
 
 
-@app.function()
+@app.function(
+    gpu="L4",
+    timeout=60 * 30,
+    scaledown_window=10 * 60,
+    volumes={MODEL_CACHE_DIR: cache_volume},
+)
 @modal.fastapi_endpoint(method="POST")
 def generate_video(req: dict):
     data = GenReq.model_validate(req)
 
-    return generate_video_core.remote(
+    return _generate_video_response(
         prompt=data.prompt,
         job_id=data.job_id,
         negative_prompt=data.negative_prompt,

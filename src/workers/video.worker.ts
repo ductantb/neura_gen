@@ -446,7 +446,6 @@ export class VideoWorker implements OnModuleDestroy {
     });
   }
 
-  // close worker on module destroy
   async onModuleDestroy() {
     if (this.worker) {
       await this.worker.close();
