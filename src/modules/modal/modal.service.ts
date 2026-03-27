@@ -2,25 +2,79 @@ import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 
+const LTX_PREVIEW_MODEL_NAME = 'ltx-video-i2v-preview';
+const LTX_PREVIEW_PRESET_ID = 'preview_ltx_i2v';
+const WAN_STANDARD_MODEL_NAME = 'wan2.2-i2v-standard';
+const WAN_STANDARD_PRESET_ID = 'standard_wan22_i2v';
+const HUNYUAN_QUALITY_MODEL_NAME = 'hunyuan-video-i2v-quality';
+const HUNYUAN_QUALITY_PRESET_ID = 'quality_hunyuan_i2v';
+
 @Injectable()
 export class ModalService {
   constructor(private readonly http: HttpService) {}
 
-  private get generateUrl() {
-    const url = process.env.MODAL_GENERATE_VIDEO_URL;
+  private getRequiredEnv(name: string) {
+    const url = process.env[name];
     if (!url) {
-      throw new InternalServerErrorException('MODAL_GENERATE_VIDEO_URL is missing');
+      throw new InternalServerErrorException(`${name} is missing`);
     }
+
     return url;
+  }
+
+  private resolveGenerateUrl(payload: GenerateVideoInput) {
+    if (
+      payload.presetId === WAN_STANDARD_PRESET_ID ||
+      payload.modelName === WAN_STANDARD_MODEL_NAME
+    ) {
+      return this.getRequiredEnv('MODAL_GENERATE_VIDEO_WAN_URL');
+    }
+
+    if (
+      payload.presetId === HUNYUAN_QUALITY_PRESET_ID ||
+      payload.modelName === HUNYUAN_QUALITY_MODEL_NAME
+    ) {
+      return this.getRequiredEnv('MODAL_GENERATE_VIDEO_HUNYUAN_URL');
+    }
+
+    if (
+      payload.presetId === undefined &&
+      payload.modelName === undefined
+    ) {
+      return this.getRequiredEnv('MODAL_GENERATE_VIDEO_URL');
+    }
+
+    if (
+      payload.presetId === LTX_PREVIEW_PRESET_ID ||
+      payload.modelName === LTX_PREVIEW_MODEL_NAME
+    ) {
+      return this.getRequiredEnv('MODAL_GENERATE_VIDEO_URL');
+    }
+
+    throw new InternalServerErrorException(
+      `No Modal route configured for preset "${payload.presetId ?? 'unknown'}" and model "${payload.modelName ?? 'unknown'}"`,
+    );
+  }
+
+  private resolveTimeoutMs(payload: GenerateVideoInput) {
+    if (
+      payload.presetId === WAN_STANDARD_PRESET_ID ||
+      payload.modelName === WAN_STANDARD_MODEL_NAME
+    ) {
+      return 45 * 60 * 1000;
+    }
+
+    return 10 * 60 * 1000;
   }
 
   async generateVideo(payload: GenerateVideoInput) {
     try {
+      const generateUrl = this.resolveGenerateUrl(payload);
       console.log('Modal payload:', JSON.stringify(payload, null, 2));
       const res = await firstValueFrom(
-        this.http.post(this.generateUrl, payload, {
+        this.http.post(generateUrl, payload, {
           headers: { 'Content-Type': 'application/json' },
-          timeout: 10 * 60 * 1000,
+          timeout: this.resolveTimeoutMs(payload),
         }),
       );
       console.log('Modal API Response Status:', res.status);

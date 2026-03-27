@@ -16,7 +16,7 @@ export interface VideoGenerationPreset {
   turboEnabled: boolean;
 }
 
-export const DEFAULT_VIDEO_PRESET_ID: VideoGenerationPresetId = 'preview_ltx_i2v';
+export const DEFAULT_VIDEO_PRESET_ID: VideoGenerationPresetId = 'standard_wan22_i2v';
 
 export const VIDEO_GENERATION_PRESETS: Record<
   VideoGenerationPresetId,
