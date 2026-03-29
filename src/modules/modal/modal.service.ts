@@ -61,7 +61,7 @@ export class ModalService {
       payload.presetId === WAN_STANDARD_PRESET_ID ||
       payload.modelName === WAN_STANDARD_MODEL_NAME
     ) {
-      return 45 * 60 * 1000;
+      return 60 * 60 * 1000;
     }
 
     return 10 * 60 * 1000;

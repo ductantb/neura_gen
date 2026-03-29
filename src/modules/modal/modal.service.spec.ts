@@ -85,7 +85,7 @@ describe('ModalService', () => {
       'https://modal.example/wan',
       expect.any(Object),
       expect.objectContaining({
-        timeout: 45 * 60 * 1000,
+        timeout: 60 * 60 * 1000,
       }),
     );
   });

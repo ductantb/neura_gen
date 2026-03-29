@@ -20,12 +20,13 @@ LTX_NUM_FRAMES = 121
 LTX_NUM_INFERENCE_STEPS = 40
 LTX_GUIDANCE_SCALE = 5.5
 LTX_VIDEO_FPS = 24
-# Follow the official Diffusers example for Wan 2.2 I2V because it is the
-# most stable documented path today.
-WAN_MAX_AREA = 480 * 832
+# A full 720P quality pass timed out in live testing on our current flow.
+# This balanced target gives Wan more detail than the original 480P setup
+# while still being realistic for end-to-end jobs.
+WAN_MAX_AREA = 576 * 1024
 WAN_NUM_FRAMES = 81
-WAN_NUM_INFERENCE_STEPS = 40
-WAN_GUIDANCE_SCALE = 3.5
+WAN_NUM_INFERENCE_STEPS = 45
+WAN_GUIDANCE_SCALE = 4.0
 WAN_VIDEO_FPS = 16
 DEFAULT_NEGATIVE_PROMPT = (
     "worst quality, low quality, blurry, jittery, distorted, deformed, flicker"
@@ -41,14 +42,16 @@ MOTION_PROMPT_SUFFIX = (
     "Motion is coherent across frames and the result should not look like a still image."
 )
 WAN_QUALITY_PROMPT_SUFFIX = (
-    "High-end cinematic image-to-video generation with rich natural motion, "
-    "stable anatomy, realistic physics, elegant camera movement, fine texture detail, "
-    "strong temporal consistency, and premium color grading."
+    "Preserve the main subject identity, facial structure, clothing, and scene layout "
+    "from the input image while creating premium cinematic image-to-video motion. "
+    "Add rich natural movement, believable body mechanics, realistic physics, elegant "
+    "camera motion, clean fine detail, stable anatomy, and strong temporal consistency."
 )
 WAN_NEGATIVE_PROMPT = (
     "low quality, blurry, static, frozen frame, weak motion, temporal flicker, "
-    "jitter, warped anatomy, broken hands, distorted face, unrealistic camera motion, "
-    "watermark, text, subtitles, compression artifacts"
+    "jitter, warped anatomy, broken hands, distorted face, identity drift, subject "
+    "duplication, morphing, melting details, unrealistic camera motion, background "
+    "warping, overexposed highlights, watermark, text, subtitles, compression artifacts"
 )
 
 cache_volume = modal.Volume.from_name("neura-video-model-cache", create_if_missing=True)
@@ -217,6 +220,16 @@ def _load_wan_pipeline():
         torch_dtype=torch.bfloat16,
     )
     pipe.to("cuda")
+
+    if hasattr(pipe, "enable_vae_tiling"):
+        pipe.enable_vae_tiling()
+    elif hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_tiling"):
+        pipe.vae.enable_tiling()
+
+    if hasattr(pipe, "enable_vae_slicing"):
+        pipe.enable_vae_slicing()
+    elif hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_slicing"):
+        pipe.vae.enable_slicing()
 
     _WAN_PIPELINE = pipe
     return _WAN_PIPELINE
@@ -390,7 +403,7 @@ def generate_video(req: dict):
 
 @app.function(
     gpu="A100-80GB",
-    timeout=60 * 45,
+    timeout=60 * 60,
     scaledown_window=10 * 60,
     volumes={MODEL_CACHE_DIR: cache_volume},
 )
@@ -483,13 +496,13 @@ def _generate_wan_video_response(
             "guidance_scale": WAN_GUIDANCE_SCALE,
             "fps": WAN_VIDEO_FPS,
         },
-        "debug_version": "modal_wan22_standard_v1",
+        "debug_version": "modal_wan22_standard_v2",
     }
 
 
 @app.function(
     gpu="A100-80GB",
-    timeout=60 * 45,
+    timeout=60 * 60,
     scaledown_window=10 * 60,
     volumes={MODEL_CACHE_DIR: cache_volume},
 )
