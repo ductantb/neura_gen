@@ -11,6 +11,7 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { CurrentUser } from 'src/common/decorators/user.decorator';
 import { JwtPayload } from 'src/common/guards/jwt-auth.guard';
 import { ApiBearerAuth, ApiNotFoundResponse, ApiOkResponse, ApiOperation } from '@nestjs/swagger';
+import { MyProfileResponseDto } from './dto/my-profile-response.dto';
 
 @ApiBearerAuth('access-token')
 @Controller('users')
@@ -26,10 +27,13 @@ export class UsersController {
   }
 
   @ApiOperation({ summary: 'Lấy thông tin tài khoản hiện tại' })
-  @ApiOkResponse({ description: 'Lấy thông tin thành công' })
+  @ApiOkResponse({
+    description: 'Lấy thông tin thành công',
+    type: MyProfileResponseDto,
+  })
   @Get('me')
   getMe(@CurrentUser() user: JwtPayload) {
-    return this.usersService.findOne(user.sub);
+    return this.usersService.getProfile(user.sub);
   }
 
   @ApiOperation({ summary: 'Lấy thông tin người dùng theo ID' })
