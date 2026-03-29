@@ -5,13 +5,21 @@ import {
   Patch,
   Param,
   Delete,
+  Query,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { CurrentUser } from 'src/common/decorators/user.decorator';
 import { JwtPayload } from 'src/common/guards/jwt-auth.guard';
-import { ApiBearerAuth, ApiNotFoundResponse, ApiOkResponse, ApiOperation } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiNotFoundResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { MyProfileResponseDto } from './dto/my-profile-response.dto';
+import { PaginationDto } from 'src/common/dto/pagination.dto';
 
 @ApiBearerAuth('access-token')
 @Controller('users')
@@ -27,13 +35,15 @@ export class UsersController {
   }
 
   @ApiOperation({ summary: 'Lấy thông tin tài khoản hiện tại' })
+  @ApiQuery({ name: 'cursor', required: false, example: 'job-id-cursor' })
+  @ApiQuery({ name: 'take', required: false, example: 10 })
   @ApiOkResponse({
     description: 'Lấy thông tin thành công',
     type: MyProfileResponseDto,
   })
   @Get('me')
-  getMe(@CurrentUser() user: JwtPayload) {
-    return this.usersService.getProfile(user.sub);
+  getMe(@CurrentUser() user: JwtPayload, @Query() query: PaginationDto) {
+    return this.usersService.getProfile(user.sub, query);
   }
 
   @ApiOperation({ summary: 'Lấy thông tin người dùng theo ID' })

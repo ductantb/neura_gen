@@ -1,12 +1,13 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { PrismaService } from 'src/infra/prisma/prisma.service';
+import { PaginationDto } from 'src/common/dto/pagination.dto';
 
 @Injectable()
 export class UsersService {
   constructor(private readonly prismaService: PrismaService) {}
 
-  async getProfile(userId: string) {
+  async getProfile(userId: string, { cursor, take = 20 }: PaginationDto) {
     const user = await this.prismaService.user.findUnique({
       where: { id: userId },
       select: {
@@ -31,33 +32,43 @@ export class UsersService {
             jobs: true,
           },
         },
-        jobs: {
-          orderBy: { createdAt: 'desc' },
-          select: {
-            id: true,
-            type: true,
-            status: true,
-            progress: true,
-            prompt: true,
-            negativePrompt: true,
-            modelName: true,
-            turboEnabled: true,
-            creditCost: true,
-            provider: true,
-            errorMessage: true,
-            createdAt: true,
-            updatedAt: true,
-            startedAt: true,
-            completedAt: true,
-            failedAt: true,
-          },
-        },
       },
     });
 
     if (!user) {
       throw new NotFoundException('User not found');
     }
+
+    const jobs = await this.prismaService.generateJob.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      take: take + 1,
+      ...(cursor && {
+        cursor: { id: cursor },
+        skip: 1,
+      }),
+      select: {
+        id: true,
+        type: true,
+        status: true,
+        progress: true,
+        prompt: true,
+        negativePrompt: true,
+        modelName: true,
+        turboEnabled: true,
+        creditCost: true,
+        provider: true,
+        errorMessage: true,
+        createdAt: true,
+        updatedAt: true,
+        startedAt: true,
+        completedAt: true,
+        failedAt: true,
+      },
+    });
+
+    const hasNext = jobs.length > take;
+    if (hasNext) jobs.pop();
 
     return {
       id: user.id,
@@ -74,7 +85,11 @@ export class UsersService {
         posts: user._count.posts,
         jobs: user._count.jobs,
       },
-      jobs: user.jobs,
+      jobs: {
+        data: jobs,
+        nextCursor: hasNext ? jobs[jobs.length - 1].id : null,
+        take,
+      },
     };
   }
 

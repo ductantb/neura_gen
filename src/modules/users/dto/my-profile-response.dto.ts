@@ -147,6 +147,27 @@ class UserProfileJobDto {
   failedAt?: Date | null;
 }
 
+class PaginatedUserProfileJobsDto {
+  @ApiProperty({
+    description: 'Danh sách job của người dùng theo trang hiện tại',
+    type: [UserProfileJobDto],
+  })
+  data: UserProfileJobDto[];
+
+  @ApiPropertyOptional({
+    description: 'Cursor cho trang kế tiếp, null nếu đã hết dữ liệu',
+    example: '6de4e89d-fd9a-4d77-8f5f-2d1af9f95c6f',
+    nullable: true,
+  })
+  nextCursor?: string | null;
+
+  @ApiProperty({
+    description: 'Số lượng bản ghi yêu cầu trên mỗi lần lấy',
+    example: 10,
+  })
+  take: number;
+}
+
 export class MyProfileResponseDto {
   @ApiProperty({
     description: 'ID của người dùng',
@@ -207,8 +228,8 @@ export class MyProfileResponseDto {
   counts: UserProfileCountsDto;
 
   @ApiProperty({
-    description: 'Danh sách job mà người dùng đã tạo',
-    type: [UserProfileJobDto],
+    description: 'Danh sách job mà người dùng đã tạo theo cơ chế phân trang cursor',
+    type: PaginatedUserProfileJobsDto,
   })
-  jobs: UserProfileJobDto[];
+  jobs: PaginatedUserProfileJobsDto;
 }
