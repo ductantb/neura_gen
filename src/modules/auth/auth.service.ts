@@ -1,9 +1,5 @@
-import {
-  ForbiddenException,
-  Injectable,
-  UnauthorizedException,
-} from '@nestjs/common';
-import { PrismaService } from '../../database/prisma.service';
+import { ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { PrismaService } from '../../infra/prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import { hashPassword, comparePassword } from '../../utils/hash';
 import { JwtPayload } from 'src/common/guards/jwt-auth.guard';
@@ -60,6 +56,7 @@ export class AuthService {
     }
 
     const payload: JwtPayload = {
+      //userId: user.id,
       sub: user.id,
       email: user.email,
       username: user.username,
