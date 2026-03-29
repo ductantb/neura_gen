@@ -5,16 +5,16 @@ import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { UserRole } from '@prisma/client';
 
 export class JwtPayload {
-  //id: string;
   sub: string;
   email: string;
   username: string;
   role: UserRole;
+  sid?: string;
 }
 
 @Injectable()
 export class JwtAuthGuard extends AuthGuard('jwt') {
-    constructor(private reflector: Reflector) {
+  constructor(private reflector: Reflector) {
     super();
   }
 
