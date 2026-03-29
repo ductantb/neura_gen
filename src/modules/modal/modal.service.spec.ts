@@ -90,6 +90,31 @@ describe('ModalService', () => {
     );
   });
 
+  it('routes the Wan budget preset to the Wan endpoint with a shorter timeout', async () => {
+    http.post.mockReturnValue(
+      of({
+        status: 200,
+        headers: {},
+        data: { status: 'ok' },
+      }),
+    );
+
+    await service.generateVideo({
+      prompt: 'prompt',
+      inputImageUrl: 'https://signed.example/input.png',
+      presetId: 'budget_wan22_i2v',
+      modelName: 'wan2.2-i2v-standard',
+    });
+
+    expect(http.post).toHaveBeenCalledWith(
+      'https://modal.example/wan',
+      expect.any(Object),
+      expect.objectContaining({
+        timeout: 35 * 60 * 1000,
+      }),
+    );
+  });
+
   it('fails fast when a requested provider route is not configured', async () => {
     delete process.env.MODAL_GENERATE_VIDEO_HUNYUAN_URL;
 

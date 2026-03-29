@@ -197,6 +197,73 @@ describe('JobsService', () => {
     );
   });
 
+  it('uses the budget Wan preset by default when no preset is provided', async () => {
+    const inputAsset = {
+      id: 'asset-1',
+      userId: 'user-1',
+      role: 'INPUT',
+      versions: [{ objectKey: 'input.png' }],
+    };
+    const createdJob = {
+      id: 'job-budget',
+      userId: 'user-1',
+      creditCost: 10,
+      provider: 'modal',
+      modelName: 'wan2.2-i2v-standard',
+    };
+    const createJob = jest.fn().mockResolvedValue(createdJob);
+
+    prisma.asset.findUnique.mockResolvedValue(inputAsset);
+    prisma.$transaction
+      .mockImplementationOnce(async (callback: any) =>
+        callback({
+          userCredit: {
+            findUnique: jest.fn().mockResolvedValue({ userId: 'user-1', balance: 100 }),
+            update: prisma.userCredit.update,
+          },
+          creditTransaction: {
+            create: prisma.creditTransaction.create,
+          },
+          generateJob: {
+            create: createJob,
+          },
+        }),
+      )
+      .mockImplementationOnce(async (callback: any) =>
+        callback({
+          generateJob: {
+            update: prisma.generateJob.update,
+          },
+          jobLog: {
+            create: prisma.jobLog.create,
+          },
+        }),
+      );
+    videoQueue.add.mockResolvedValue({ id: 'job-budget' });
+
+    const result = await service.createVideoJob('user-1', {
+      inputAssetId: 'asset-1',
+      prompt: 'prompt',
+    });
+
+    expect(createJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          modelName: 'wan2.2-i2v-standard',
+          extraConfig: expect.objectContaining({
+            presetId: 'budget_wan22_i2v',
+            workflow: 'I2V',
+          }),
+        }),
+      }),
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        presetId: 'budget_wan22_i2v',
+      }),
+    );
+  });
+
   it('resolves input assets from extraConfig instead of job asset ownership', async () => {
     prisma.generateJob.findFirst.mockResolvedValue({
       id: 'job-1',

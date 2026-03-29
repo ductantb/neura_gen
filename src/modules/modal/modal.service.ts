@@ -4,6 +4,7 @@ import { firstValueFrom } from 'rxjs';
 
 const LTX_PREVIEW_MODEL_NAME = 'ltx-video-i2v-preview';
 const LTX_PREVIEW_PRESET_ID = 'preview_ltx_i2v';
+const WAN_BUDGET_PRESET_ID = 'budget_wan22_i2v';
 const WAN_STANDARD_MODEL_NAME = 'wan2.2-i2v-standard';
 const WAN_STANDARD_PRESET_ID = 'standard_wan22_i2v';
 const HUNYUAN_QUALITY_MODEL_NAME = 'hunyuan-video-i2v-quality';
@@ -24,6 +25,7 @@ export class ModalService {
 
   private resolveGenerateUrl(payload: GenerateVideoInput) {
     if (
+      payload.presetId === WAN_BUDGET_PRESET_ID ||
       payload.presetId === WAN_STANDARD_PRESET_ID ||
       payload.modelName === WAN_STANDARD_MODEL_NAME
     ) {
@@ -58,10 +60,13 @@ export class ModalService {
 
   private resolveTimeoutMs(payload: GenerateVideoInput) {
     if (
+      payload.presetId === WAN_BUDGET_PRESET_ID ||
       payload.presetId === WAN_STANDARD_PRESET_ID ||
       payload.modelName === WAN_STANDARD_MODEL_NAME
     ) {
-      return 60 * 60 * 1000;
+      return payload.presetId === WAN_BUDGET_PRESET_ID
+        ? 35 * 60 * 1000
+        : 60 * 60 * 1000;
     }
 
     return 10 * 60 * 1000;

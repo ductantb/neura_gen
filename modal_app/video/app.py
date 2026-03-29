@@ -12,6 +12,7 @@ LTX_MODEL_ID = "Lightricks/LTX-Video"
 WAN_MODEL_ID = "Wan-AI/Wan2.2-I2V-A14B-Diffusers"
 LTX_PREVIEW_MODEL_NAME = "ltx-video-i2v-preview"
 LTX_PREVIEW_PRESET_ID = "preview_ltx_i2v"
+WAN_BUDGET_PRESET_ID = "budget_wan22_i2v"
 WAN_STANDARD_MODEL_NAME = "wan2.2-i2v-standard"
 WAN_STANDARD_PRESET_ID = "standard_wan22_i2v"
 LTX_TARGET_WIDTH = 832
@@ -23,6 +24,12 @@ LTX_VIDEO_FPS = 24
 # A full 720P quality pass timed out in live testing on our current flow.
 # This balanced target gives Wan more detail than the original 480P setup
 # while still being realistic for end-to-end jobs.
+WAN_BUDGET_MAX_AREA = 480 * 832
+WAN_BUDGET_NUM_FRAMES = 65
+WAN_BUDGET_NUM_INFERENCE_STEPS = 32
+WAN_BUDGET_GUIDANCE_SCALE = 3.5
+WAN_BUDGET_VIDEO_FPS = 16
+
 WAN_MAX_AREA = 576 * 1024
 WAN_NUM_FRAMES = 81
 WAN_NUM_INFERENCE_STEPS = 45
@@ -141,9 +148,9 @@ def _validate_wan_request(
             f"Unsupported modelName for Wan standard deployment: {model_name}"
         )
 
-    if preset_id and preset_id != WAN_STANDARD_PRESET_ID:
+    if preset_id and preset_id not in {WAN_BUDGET_PRESET_ID, WAN_STANDARD_PRESET_ID}:
         raise ValueError(
-            f"Unsupported presetId for Wan standard deployment: {preset_id}"
+            f"Unsupported presetId for Wan deployment: {preset_id}"
         )
 
     if workflow and workflow != "I2V":
@@ -180,6 +187,31 @@ def _build_wan_negative_prompt(negative_prompt: str | None) -> str:
         parts.insert(0, negative_prompt.strip())
 
     return ", ".join(part for part in parts if part)
+
+
+def _resolve_wan_profile(preset_id: str | None):
+    if preset_id == WAN_BUDGET_PRESET_ID:
+        return {
+            "max_area": WAN_BUDGET_MAX_AREA,
+            "num_frames": WAN_BUDGET_NUM_FRAMES,
+            "num_inference_steps": WAN_BUDGET_NUM_INFERENCE_STEPS,
+            "guidance_scale": WAN_BUDGET_GUIDANCE_SCALE,
+            "fps": WAN_BUDGET_VIDEO_FPS,
+            "message": "Wan 2.2 budget generated successfully",
+            "preset_id": WAN_BUDGET_PRESET_ID,
+            "debug_version": "modal_wan22_budget_v1",
+        }
+
+    return {
+        "max_area": WAN_MAX_AREA,
+        "num_frames": WAN_NUM_FRAMES,
+        "num_inference_steps": WAN_NUM_INFERENCE_STEPS,
+        "guidance_scale": WAN_GUIDANCE_SCALE,
+        "fps": WAN_VIDEO_FPS,
+        "message": "Wan 2.2 standard generated successfully",
+        "preset_id": WAN_STANDARD_PRESET_ID,
+        "debug_version": "modal_wan22_standard_v2",
+    }
 
 
 def _load_ltx_pipeline():
@@ -252,7 +284,7 @@ def _load_input_image(image_url: str):
     )
 
 
-def _load_wan_input_image(image_url: str, pipe):
+def _load_wan_input_image(image_url: str, pipe, max_area: int):
     import numpy as np
     import requests
     from PIL import Image
@@ -266,11 +298,11 @@ def _load_wan_input_image(image_url: str, pipe):
     mod_value = pipe.vae_scale_factor_spatial * pipe.transformer.config.patch_size[1]
     height = max(
         mod_value,
-        round(np.sqrt(WAN_MAX_AREA * aspect_ratio)) // mod_value * mod_value,
+        round(np.sqrt(max_area * aspect_ratio)) // mod_value * mod_value,
     )
     width = max(
         mod_value,
-        round(np.sqrt(WAN_MAX_AREA / aspect_ratio)) // mod_value * mod_value,
+        round(np.sqrt(max_area / aspect_ratio)) // mod_value * mod_value,
     )
 
     resized = image.resize((width, height), Image.Resampling.LANCZOS)
@@ -447,8 +479,13 @@ def _generate_wan_video_response(
 
     _validate_wan_request(input_image_url, model_name, preset_id, workflow)
 
+    profile = _resolve_wan_profile(preset_id)
     pipe = _load_wan_pipeline()
-    image, height, width = _load_wan_input_image(input_image_url, pipe)
+    image, height, width = _load_wan_input_image(
+        input_image_url,
+        pipe,
+        profile["max_area"],
+    )
     generator = torch.Generator(device="cuda").manual_seed(_seed_from_job(job_id))
 
     result = pipe(
@@ -457,9 +494,9 @@ def _generate_wan_video_response(
         negative_prompt=_build_wan_negative_prompt(negative_prompt),
         height=height,
         width=width,
-        num_frames=WAN_NUM_FRAMES,
-        num_inference_steps=WAN_NUM_INFERENCE_STEPS,
-        guidance_scale=WAN_GUIDANCE_SCALE,
+        num_frames=profile["num_frames"],
+        num_inference_steps=profile["num_inference_steps"],
+        guidance_scale=profile["guidance_scale"],
         generator=generator,
     )
     frames = result.frames[0]
@@ -468,7 +505,7 @@ def _generate_wan_video_response(
         output_path = tmp.name
 
     try:
-        export_to_video(frames, output_path, fps=WAN_VIDEO_FPS)
+        export_to_video(frames, output_path, fps=profile["fps"])
         with open(output_path, "rb") as video_file:
             encoded_video = base64.b64encode(video_file.read()).decode("utf-8")
     finally:
@@ -477,26 +514,26 @@ def _generate_wan_video_response(
 
     return {
         "status": "ok",
-        "message": "Wan 2.2 standard generated successfully",
+        "message": profile["message"],
         "job_id": job_id,
         "prompt": prompt,
         "negative_prompt": negative_prompt,
         "input_image_url": input_image_url,
         "provider": provider or "modal",
         "model_name": model_name or WAN_STANDARD_MODEL_NAME,
-        "preset_id": preset_id or WAN_STANDARD_PRESET_ID,
+        "preset_id": preset_id or profile["preset_id"],
         "user_id": user_id,
         "workflow": workflow or "I2V",
         "video_base64": encoded_video,
         "generation_config": {
             "width": width,
             "height": height,
-            "num_frames": WAN_NUM_FRAMES,
-            "num_inference_steps": WAN_NUM_INFERENCE_STEPS,
-            "guidance_scale": WAN_GUIDANCE_SCALE,
-            "fps": WAN_VIDEO_FPS,
+            "num_frames": profile["num_frames"],
+            "num_inference_steps": profile["num_inference_steps"],
+            "guidance_scale": profile["guidance_scale"],
+            "fps": profile["fps"],
         },
-        "debug_version": "modal_wan22_standard_v2",
+        "debug_version": profile["debug_version"],
     }
 
 
