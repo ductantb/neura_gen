@@ -4,7 +4,6 @@ export type VideoGenerationProvider = 'modal';
 export type VideoGenerationWorkflow = 'I2V' | 'TI2V';
 export type VideoGenerationPresetId =
   | 'preview_ltx_i2v'
-  | 'budget_wan22_ti2v'
   | 'standard_wan22_ti2v'
   | 'quality_hunyuan_i2v';
 
@@ -29,14 +28,6 @@ export const VIDEO_GENERATION_PRESETS: Record<
     provider: 'modal',
     workflow: 'I2V',
     modelName: 'ltx-video-i2v-preview',
-    turboEnabled: true,
-  },
-  budget_wan22_ti2v: {
-    id: 'budget_wan22_ti2v',
-    label: 'Wan 2.2 Budget TI2V',
-    provider: 'modal',
-    workflow: 'TI2V',
-    modelName: 'wan2.2-ti2v-standard',
     turboEnabled: true,
   },
   standard_wan22_ti2v: {

@@ -85,32 +85,7 @@ describe('ModalService', () => {
       'https://modal.example/wan',
       expect.any(Object),
       expect.objectContaining({
-        timeout: 60 * 60 * 1000,
-      }),
-    );
-  });
-
-  it('routes the Wan budget preset to the Wan endpoint with a shorter timeout', async () => {
-    http.post.mockReturnValue(
-      of({
-        status: 200,
-        headers: {},
-        data: { status: 'ok' },
-      }),
-    );
-
-    await service.generateVideo({
-      prompt: 'prompt',
-      inputImageUrl: 'https://signed.example/input.png',
-      presetId: 'budget_wan22_ti2v',
-      modelName: 'wan2.2-ti2v-standard',
-    });
-
-    expect(http.post).toHaveBeenCalledWith(
-      'https://modal.example/wan',
-      expect.any(Object),
-      expect.objectContaining({
-        timeout: 35 * 60 * 1000,
+        timeout: 45 * 60 * 1000,
       }),
     );
   });

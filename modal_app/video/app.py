@@ -12,7 +12,6 @@ LTX_MODEL_ID = "Lightricks/LTX-Video"
 WAN_MODEL_ID = "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
 LTX_PREVIEW_MODEL_NAME = "ltx-video-i2v-preview"
 LTX_PREVIEW_PRESET_ID = "preview_ltx_i2v"
-WAN_BUDGET_PRESET_ID = "budget_wan22_ti2v"
 WAN_STANDARD_MODEL_NAME = "wan2.2-ti2v-standard"
 WAN_STANDARD_PRESET_ID = "standard_wan22_ti2v"
 LTX_TARGET_WIDTH = 832
@@ -21,19 +20,12 @@ LTX_NUM_FRAMES = 121
 LTX_NUM_INFERENCE_STEPS = 40
 LTX_GUIDANCE_SCALE = 5.5
 LTX_VIDEO_FPS = 24
-# A full 720P quality pass timed out in live testing on our current flow.
-# This balanced target gives Wan more detail than the original 480P setup
-# while still being realistic for end-to-end jobs.
-WAN_BUDGET_MAX_AREA = 576 * 1024
-WAN_BUDGET_NUM_FRAMES = 81
-WAN_BUDGET_NUM_INFERENCE_STEPS = 40
-WAN_BUDGET_GUIDANCE_SCALE = 4.5
-WAN_BUDGET_VIDEO_FPS = 24
-
+# Tuned for L40S: keep 720p-ish quality while avoiding the long runtimes
+# and timeout risk of the heavier 121-frame / 50-step configuration.
 WAN_MAX_AREA = 704 * 1280
-WAN_NUM_FRAMES = 121
-WAN_NUM_INFERENCE_STEPS = 50
-WAN_GUIDANCE_SCALE = 5.0
+WAN_NUM_FRAMES = 81
+WAN_NUM_INFERENCE_STEPS = 40
+WAN_GUIDANCE_SCALE = 4.5
 WAN_VIDEO_FPS = 24
 DEFAULT_NEGATIVE_PROMPT = (
     "worst quality, low quality, blurry, jittery, distorted, deformed, flicker"
@@ -148,7 +140,7 @@ def _validate_wan_request(
             f"Unsupported modelName for Wan TI2V deployment: {model_name}"
         )
 
-    if preset_id and preset_id not in {WAN_BUDGET_PRESET_ID, WAN_STANDARD_PRESET_ID}:
+    if preset_id and preset_id != WAN_STANDARD_PRESET_ID:
         raise ValueError(
             f"Unsupported presetId for Wan TI2V deployment: {preset_id}"
         )
@@ -189,19 +181,7 @@ def _build_wan_negative_prompt(negative_prompt: str | None) -> str:
     return ", ".join(part for part in parts if part)
 
 
-def _resolve_wan_profile(preset_id: str | None):
-    if preset_id == WAN_BUDGET_PRESET_ID:
-        return {
-            "max_area": WAN_BUDGET_MAX_AREA,
-            "num_frames": WAN_BUDGET_NUM_FRAMES,
-            "num_inference_steps": WAN_BUDGET_NUM_INFERENCE_STEPS,
-            "guidance_scale": WAN_BUDGET_GUIDANCE_SCALE,
-            "fps": WAN_BUDGET_VIDEO_FPS,
-            "message": "Wan 2.2 TI2V budget generated successfully",
-            "preset_id": WAN_BUDGET_PRESET_ID,
-            "debug_version": "modal_wan22_ti2v_budget_v1",
-        }
-
+def _resolve_wan_profile():
     return {
         "max_area": WAN_MAX_AREA,
         "num_frames": WAN_NUM_FRAMES,
@@ -245,29 +225,13 @@ def _load_wan_pipeline():
         return _WAN_PIPELINE
 
     import torch
-    from diffusers import AutoencoderKLWan, WanPipeline
+    from diffusers import WanImageToVideoPipeline
 
-    vae = AutoencoderKLWan.from_pretrained(
+    pipe = WanImageToVideoPipeline.from_pretrained(
         WAN_MODEL_ID,
-        subfolder="vae",
-        torch_dtype=torch.float32,
-    )
-    pipe = WanPipeline.from_pretrained(
-        WAN_MODEL_ID,
-        vae=vae,
         torch_dtype=torch.bfloat16,
     )
     pipe.to("cuda")
-
-    if hasattr(pipe, "enable_vae_tiling"):
-        pipe.enable_vae_tiling()
-    elif hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_tiling"):
-        pipe.vae.enable_tiling()
-
-    if hasattr(pipe, "enable_vae_slicing"):
-        pipe.enable_vae_slicing()
-    elif hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_slicing"):
-        pipe.vae.enable_slicing()
 
     _WAN_PIPELINE = pipe
     return _WAN_PIPELINE
@@ -440,8 +404,8 @@ def generate_video(req: dict):
 
 
 @app.function(
-    gpu="A100-80GB",
-    timeout=60 * 60,
+    gpu="L40S",
+    timeout=60 * 45,
     scaledown_window=10 * 60,
     volumes={MODEL_CACHE_DIR: cache_volume},
 )
@@ -485,7 +449,7 @@ def _generate_wan_video_response(
 
     _validate_wan_request(input_image_url, model_name, preset_id, workflow)
 
-    profile = _resolve_wan_profile(preset_id)
+    profile = _resolve_wan_profile()
     pipe = _load_wan_pipeline()
     image, height, width = _load_wan_input_image(
         input_image_url,
@@ -544,8 +508,8 @@ def _generate_wan_video_response(
 
 
 @app.function(
-    gpu="A100-80GB",
-    timeout=60 * 60,
+    gpu="L40S",
+    timeout=60 * 45,
     scaledown_window=10 * 60,
     volumes={MODEL_CACHE_DIR: cache_volume},
 )
