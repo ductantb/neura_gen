@@ -1,11 +1,11 @@
 import { BadRequestException } from '@nestjs/common';
 
 export type VideoGenerationProvider = 'modal';
-export type VideoGenerationWorkflow = 'I2V';
+export type VideoGenerationWorkflow = 'I2V' | 'TI2V';
 export type VideoGenerationPresetId =
   | 'preview_ltx_i2v'
-  | 'budget_wan22_i2v'
-  | 'standard_wan22_i2v'
+  | 'budget_wan22_ti2v'
+  | 'standard_wan22_ti2v'
   | 'quality_hunyuan_i2v';
 
 export interface VideoGenerationPreset {
@@ -17,7 +17,7 @@ export interface VideoGenerationPreset {
   turboEnabled: boolean;
 }
 
-export const DEFAULT_VIDEO_PRESET_ID: VideoGenerationPresetId = 'budget_wan22_i2v';
+export const DEFAULT_VIDEO_PRESET_ID: VideoGenerationPresetId = 'standard_wan22_ti2v';
 
 export const VIDEO_GENERATION_PRESETS: Record<
   VideoGenerationPresetId,
@@ -31,20 +31,20 @@ export const VIDEO_GENERATION_PRESETS: Record<
     modelName: 'ltx-video-i2v-preview',
     turboEnabled: true,
   },
-  budget_wan22_i2v: {
-    id: 'budget_wan22_i2v',
-    label: 'Wan 2.2 Budget I2V',
+  budget_wan22_ti2v: {
+    id: 'budget_wan22_ti2v',
+    label: 'Wan 2.2 Budget TI2V',
     provider: 'modal',
-    workflow: 'I2V',
-    modelName: 'wan2.2-i2v-standard',
+    workflow: 'TI2V',
+    modelName: 'wan2.2-ti2v-standard',
     turboEnabled: true,
   },
-  standard_wan22_i2v: {
-    id: 'standard_wan22_i2v',
-    label: 'Wan 2.2 Standard I2V',
+  standard_wan22_ti2v: {
+    id: 'standard_wan22_ti2v',
+    label: 'Wan 2.2 Standard TI2V',
     provider: 'modal',
-    workflow: 'I2V',
-    modelName: 'wan2.2-i2v-standard',
+    workflow: 'TI2V',
+    modelName: 'wan2.2-ti2v-standard',
     turboEnabled: false,
   },
   quality_hunyuan_i2v: {

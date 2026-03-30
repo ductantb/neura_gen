@@ -4,9 +4,9 @@ import { firstValueFrom } from 'rxjs';
 
 const LTX_PREVIEW_MODEL_NAME = 'ltx-video-i2v-preview';
 const LTX_PREVIEW_PRESET_ID = 'preview_ltx_i2v';
-const WAN_BUDGET_PRESET_ID = 'budget_wan22_i2v';
-const WAN_STANDARD_MODEL_NAME = 'wan2.2-i2v-standard';
-const WAN_STANDARD_PRESET_ID = 'standard_wan22_i2v';
+const WAN_BUDGET_PRESET_ID = 'budget_wan22_ti2v';
+const WAN_STANDARD_MODEL_NAME = 'wan2.2-ti2v-standard';
+const WAN_STANDARD_PRESET_ID = 'standard_wan22_ti2v';
 const HUNYUAN_QUALITY_MODEL_NAME = 'hunyuan-video-i2v-quality';
 const HUNYUAN_QUALITY_PRESET_ID = 'quality_hunyuan_i2v';
 

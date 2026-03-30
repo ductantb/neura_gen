@@ -77,8 +77,8 @@ describe('ModalService', () => {
     await service.generateVideo({
       prompt: 'prompt',
       inputImageUrl: 'https://signed.example/input.png',
-      presetId: 'standard_wan22_i2v',
-      modelName: 'wan2.2-i2v-standard',
+      presetId: 'standard_wan22_ti2v',
+      modelName: 'wan2.2-ti2v-standard',
     });
 
     expect(http.post).toHaveBeenCalledWith(
@@ -102,8 +102,8 @@ describe('ModalService', () => {
     await service.generateVideo({
       prompt: 'prompt',
       inputImageUrl: 'https://signed.example/input.png',
-      presetId: 'budget_wan22_i2v',
-      modelName: 'wan2.2-i2v-standard',
+      presetId: 'budget_wan22_ti2v',
+      modelName: 'wan2.2-ti2v-standard',
     });
 
     expect(http.post).toHaveBeenCalledWith(

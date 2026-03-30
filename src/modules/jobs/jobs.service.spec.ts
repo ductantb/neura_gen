@@ -137,7 +137,7 @@ describe('JobsService', () => {
       userId: 'user-1',
       creditCost: 10,
       provider: 'modal',
-      modelName: 'wan2.2-i2v-standard',
+      modelName: 'wan2.2-ti2v-standard',
     };
     const createJob = jest.fn().mockResolvedValue(createdJob);
 
@@ -172,18 +172,18 @@ describe('JobsService', () => {
     const result = await service.createVideoJob('user-1', {
       inputAssetId: 'asset-1',
       prompt: 'prompt',
-      presetId: 'standard_wan22_i2v',
+      presetId: 'standard_wan22_ti2v',
     });
 
     expect(createJob).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           provider: 'modal',
-          modelName: 'wan2.2-i2v-standard',
+          modelName: 'wan2.2-ti2v-standard',
           turboEnabled: false,
           extraConfig: expect.objectContaining({
-            presetId: 'standard_wan22_i2v',
-            workflow: 'I2V',
+            presetId: 'standard_wan22_ti2v',
+            workflow: 'TI2V',
           }),
         }),
       }),
@@ -191,13 +191,13 @@ describe('JobsService', () => {
     expect(result).toEqual(
       expect.objectContaining({
         provider: 'modal',
-        modelName: 'wan2.2-i2v-standard',
-        presetId: 'standard_wan22_i2v',
+        modelName: 'wan2.2-ti2v-standard',
+        presetId: 'standard_wan22_ti2v',
       }),
     );
   });
 
-  it('uses the budget Wan preset by default when no preset is provided', async () => {
+  it('uses the default Wan TI2V preset when no preset is provided', async () => {
     const inputAsset = {
       id: 'asset-1',
       userId: 'user-1',
@@ -209,7 +209,7 @@ describe('JobsService', () => {
       userId: 'user-1',
       creditCost: 10,
       provider: 'modal',
-      modelName: 'wan2.2-i2v-standard',
+      modelName: 'wan2.2-ti2v-standard',
     };
     const createJob = jest.fn().mockResolvedValue(createdJob);
 
@@ -249,17 +249,17 @@ describe('JobsService', () => {
     expect(createJob).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          modelName: 'wan2.2-i2v-standard',
+          modelName: 'wan2.2-ti2v-standard',
           extraConfig: expect.objectContaining({
-            presetId: 'budget_wan22_i2v',
-            workflow: 'I2V',
+            presetId: 'standard_wan22_ti2v',
+            workflow: 'TI2V',
           }),
         }),
       }),
     );
     expect(result).toEqual(
       expect.objectContaining({
-        presetId: 'budget_wan22_i2v',
+        presetId: 'standard_wan22_ti2v',
       }),
     );
   });

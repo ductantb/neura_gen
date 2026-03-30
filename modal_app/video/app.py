@@ -9,12 +9,12 @@ from pydantic import BaseModel, Field
 
 MODEL_CACHE_DIR = "/cache"
 LTX_MODEL_ID = "Lightricks/LTX-Video"
-WAN_MODEL_ID = "Wan-AI/Wan2.2-I2V-A14B-Diffusers"
+WAN_MODEL_ID = "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
 LTX_PREVIEW_MODEL_NAME = "ltx-video-i2v-preview"
 LTX_PREVIEW_PRESET_ID = "preview_ltx_i2v"
-WAN_BUDGET_PRESET_ID = "budget_wan22_i2v"
-WAN_STANDARD_MODEL_NAME = "wan2.2-i2v-standard"
-WAN_STANDARD_PRESET_ID = "standard_wan22_i2v"
+WAN_BUDGET_PRESET_ID = "budget_wan22_ti2v"
+WAN_STANDARD_MODEL_NAME = "wan2.2-ti2v-standard"
+WAN_STANDARD_PRESET_ID = "standard_wan22_ti2v"
 LTX_TARGET_WIDTH = 832
 LTX_TARGET_HEIGHT = 480
 LTX_NUM_FRAMES = 121
@@ -24,17 +24,17 @@ LTX_VIDEO_FPS = 24
 # A full 720P quality pass timed out in live testing on our current flow.
 # This balanced target gives Wan more detail than the original 480P setup
 # while still being realistic for end-to-end jobs.
-WAN_BUDGET_MAX_AREA = 480 * 832
-WAN_BUDGET_NUM_FRAMES = 65
-WAN_BUDGET_NUM_INFERENCE_STEPS = 32
-WAN_BUDGET_GUIDANCE_SCALE = 3.5
-WAN_BUDGET_VIDEO_FPS = 16
+WAN_BUDGET_MAX_AREA = 576 * 1024
+WAN_BUDGET_NUM_FRAMES = 81
+WAN_BUDGET_NUM_INFERENCE_STEPS = 40
+WAN_BUDGET_GUIDANCE_SCALE = 4.5
+WAN_BUDGET_VIDEO_FPS = 24
 
-WAN_MAX_AREA = 576 * 1024
-WAN_NUM_FRAMES = 81
-WAN_NUM_INFERENCE_STEPS = 45
-WAN_GUIDANCE_SCALE = 4.0
-WAN_VIDEO_FPS = 16
+WAN_MAX_AREA = 704 * 1280
+WAN_NUM_FRAMES = 121
+WAN_NUM_INFERENCE_STEPS = 50
+WAN_GUIDANCE_SCALE = 5.0
+WAN_VIDEO_FPS = 24
 DEFAULT_NEGATIVE_PROMPT = (
     "worst quality, low quality, blurry, jittery, distorted, deformed, flicker"
 )
@@ -141,20 +141,20 @@ def _validate_wan_request(
     workflow: str | None,
 ) -> None:
     if not input_image_url:
-        raise ValueError("Wan 2.2 I2V requires inputImageUrl")
+        raise ValueError("Wan 2.2 TI2V currently requires inputImageUrl in this backend")
 
     if model_name and model_name != WAN_STANDARD_MODEL_NAME:
         raise ValueError(
-            f"Unsupported modelName for Wan standard deployment: {model_name}"
+            f"Unsupported modelName for Wan TI2V deployment: {model_name}"
         )
 
     if preset_id and preset_id not in {WAN_BUDGET_PRESET_ID, WAN_STANDARD_PRESET_ID}:
         raise ValueError(
-            f"Unsupported presetId for Wan deployment: {preset_id}"
+            f"Unsupported presetId for Wan TI2V deployment: {preset_id}"
         )
 
-    if workflow and workflow != "I2V":
-        raise ValueError(f"Unsupported workflow for Wan standard deployment: {workflow}")
+    if workflow and workflow != "TI2V":
+        raise ValueError(f"Unsupported workflow for Wan TI2V deployment: {workflow}")
 
 
 def _seed_from_job(job_id: str | None) -> int:
@@ -178,7 +178,7 @@ def _build_negative_prompt(negative_prompt: str | None) -> str:
 
 
 def _build_wan_prompt(prompt: str) -> str:
-    return f"{prompt.strip()}. {WAN_QUALITY_PROMPT_SUFFIX}"
+    return f"{prompt.strip()}. {WAN_QUALITY_PROMPT_SUFFIX} The final clip should feel like a premium 24fps cinematic shot."
 
 
 def _build_wan_negative_prompt(negative_prompt: str | None) -> str:
@@ -197,9 +197,9 @@ def _resolve_wan_profile(preset_id: str | None):
             "num_inference_steps": WAN_BUDGET_NUM_INFERENCE_STEPS,
             "guidance_scale": WAN_BUDGET_GUIDANCE_SCALE,
             "fps": WAN_BUDGET_VIDEO_FPS,
-            "message": "Wan 2.2 budget generated successfully",
+            "message": "Wan 2.2 TI2V budget generated successfully",
             "preset_id": WAN_BUDGET_PRESET_ID,
-            "debug_version": "modal_wan22_budget_v1",
+            "debug_version": "modal_wan22_ti2v_budget_v1",
         }
 
     return {
@@ -208,9 +208,9 @@ def _resolve_wan_profile(preset_id: str | None):
         "num_inference_steps": WAN_NUM_INFERENCE_STEPS,
         "guidance_scale": WAN_GUIDANCE_SCALE,
         "fps": WAN_VIDEO_FPS,
-        "message": "Wan 2.2 standard generated successfully",
+        "message": "Wan 2.2 TI2V standard generated successfully",
         "preset_id": WAN_STANDARD_PRESET_ID,
-        "debug_version": "modal_wan22_standard_v2",
+        "debug_version": "modal_wan22_ti2v_standard_v1",
     }
 
 
@@ -245,10 +245,16 @@ def _load_wan_pipeline():
         return _WAN_PIPELINE
 
     import torch
-    from diffusers import WanImageToVideoPipeline
+    from diffusers import AutoencoderKLWan, WanPipeline
 
-    pipe = WanImageToVideoPipeline.from_pretrained(
+    vae = AutoencoderKLWan.from_pretrained(
         WAN_MODEL_ID,
+        subfolder="vae",
+        torch_dtype=torch.float32,
+    )
+    pipe = WanPipeline.from_pretrained(
+        WAN_MODEL_ID,
+        vae=vae,
         torch_dtype=torch.bfloat16,
     )
     pipe.to("cuda")
@@ -489,7 +495,6 @@ def _generate_wan_video_response(
     generator = torch.Generator(device="cuda").manual_seed(_seed_from_job(job_id))
 
     result = pipe(
-        image=image,
         prompt=_build_wan_prompt(prompt),
         negative_prompt=_build_wan_negative_prompt(negative_prompt),
         height=height,
@@ -497,6 +502,7 @@ def _generate_wan_video_response(
         num_frames=profile["num_frames"],
         num_inference_steps=profile["num_inference_steps"],
         guidance_scale=profile["guidance_scale"],
+        image=image,
         generator=generator,
     )
     frames = result.frames[0]
@@ -523,7 +529,7 @@ def _generate_wan_video_response(
         "model_name": model_name or WAN_STANDARD_MODEL_NAME,
         "preset_id": preset_id or profile["preset_id"],
         "user_id": user_id,
-        "workflow": workflow or "I2V",
+        "workflow": workflow or "TI2V",
         "video_base64": encoded_video,
         "generation_config": {
             "width": width,
