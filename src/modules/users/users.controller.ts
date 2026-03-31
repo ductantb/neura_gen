@@ -3,6 +3,7 @@ import {
   Get,
   Body,
   Patch,
+  Post,
   Param,
   Delete,
   Query,
@@ -20,6 +21,10 @@ import {
 } from '@nestjs/swagger';
 import { MyProfileResponseDto } from './dto/my-profile-response.dto';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
+import {
+  TopUpCreditDto,
+  TopUpCreditResponseDto,
+} from './dto/top-up-credit.dto';
 
 @ApiBearerAuth('access-token')
 @Controller('users')
@@ -44,6 +49,23 @@ export class UsersController {
   @Get('me')
   getMe(@CurrentUser() user: JwtPayload, @Query() query: PaginationDto) {
     return this.usersService.getProfile(user.sub, query);
+  }
+
+  @ApiOperation({
+    summary: 'Cộng credit test cho tài khoản hiện tại',
+    description:
+      'API tạm thời để test luồng credit trước khi tích hợp ngân hàng hoặc cổng thanh toán.',
+  })
+  @ApiOkResponse({
+    description: 'Cộng credit thành công',
+    type: TopUpCreditResponseDto,
+  })
+  @Post('me/credits/topup')
+  topUpMyCredits(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: TopUpCreditDto,
+  ) {
+    return this.usersService.topUpMyCredits(user.sub, dto);
   }
 
   @ApiOperation({ summary: 'Lấy thông tin người dùng theo ID' })

@@ -1,7 +1,9 @@
+import { CreditReason } from '@prisma/client';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { PrismaService } from 'src/infra/prisma/prisma.service';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
+import { TopUpCreditDto } from './dto/top-up-credit.dto';
 
 @Injectable()
 export class UsersService {
@@ -112,6 +114,54 @@ export class UsersService {
     return this.prismaService.user.update({
       where: { id: userId },
       data: dto,
+    });
+  }
+
+  async topUpMyCredits(userId: string, dto: TopUpCreditDto) {
+    return this.prismaService.$transaction(async (tx) => {
+      const user = await tx.user.findUnique({
+        where: { id: userId },
+        select: { id: true },
+      });
+
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+
+      const wallet = await tx.userCredit.upsert({
+        where: { userId },
+        update: {
+          balance: {
+            increment: dto.amount,
+          },
+        },
+        create: {
+          userId,
+          balance: dto.amount,
+        },
+      });
+
+      const transaction = await tx.creditTransaction.create({
+        data: {
+          userId,
+          amount: dto.amount,
+          reason: CreditReason.TEST_REWARD,
+          metadata: {
+            source: 'manual_test_topup_api',
+            note: dto.note ?? null,
+          },
+        },
+      });
+
+      return {
+        userId,
+        amount: dto.amount,
+        balance: wallet.balance,
+        reason: transaction.reason,
+        transactionId: transaction.id,
+        note: dto.note ?? null,
+        createdAt: transaction.createdAt,
+      };
     });
   }
 

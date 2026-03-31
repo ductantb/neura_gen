@@ -23,7 +23,7 @@ LTX_VIDEO_FPS = 24
 # Tuned for L40S: keep 720p-ish quality while avoiding the long runtimes
 # and timeout risk of the heavier 121-frame / 50-step configuration.
 WAN_MAX_AREA = 704 * 1280
-WAN_NUM_FRAMES = 81
+WAN_NUM_FRAMES = 121
 WAN_NUM_INFERENCE_STEPS = 40
 WAN_GUIDANCE_SCALE = 4.5
 WAN_VIDEO_FPS = 24
@@ -190,7 +190,7 @@ def _resolve_wan_profile():
         "fps": WAN_VIDEO_FPS,
         "message": "Wan 2.2 TI2V standard generated successfully",
         "preset_id": WAN_STANDARD_PRESET_ID,
-        "debug_version": "modal_wan22_ti2v_standard_v1",
+        "debug_version": "modal_wan22_ti2v_standard_v2_5s",
     }
 
 
