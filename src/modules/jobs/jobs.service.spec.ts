@@ -1,10 +1,12 @@
 import { ServiceUnavailableException } from '@nestjs/common';
 import { JobStatus } from '@prisma/client';
+import { JobEventsService } from './job-events.service';
 import { JobsService } from './jobs.service';
 import { VIDEO_QUEUE } from 'src/common/constants';
 
 describe('JobsService', () => {
   let service: JobsService;
+  const now = new Date('2026-03-31T00:00:00.000Z');
 
   const prisma = {
     asset: {
@@ -37,12 +39,26 @@ describe('JobsService', () => {
     getJob: jest.fn(),
   };
 
+  const jobEvents = {
+    emitStatus: jest.fn(),
+    emitLog: jest.fn(),
+    emitSnapshot: jest.fn(),
+  };
+
   beforeEach(() => {
     jest.clearAllMocks();
+    prisma.jobLog.create.mockImplementation(({ data }: any) =>
+      Promise.resolve({
+        jobId: data.jobId,
+        message: data.message,
+        createdAt: now,
+      }),
+    );
 
     service = new JobsService(
       prisma as any,
       storageService as any,
+      jobEvents as unknown as JobEventsService,
       videoQueue as any,
     );
   });
@@ -63,6 +79,16 @@ describe('JobsService', () => {
     };
 
     prisma.asset.findUnique.mockResolvedValue(inputAsset);
+    prisma.generateJob.update.mockResolvedValue({
+      id: 'job-1',
+      status: JobStatus.FAILED,
+      progress: 0,
+      errorMessage: 'Queue enqueue failed: redis down',
+      startedAt: null,
+      completedAt: null,
+      failedAt: now,
+      updatedAt: now,
+    });
     prisma.$transaction
       .mockImplementationOnce(async (callback: any) =>
         callback({
@@ -142,6 +168,16 @@ describe('JobsService', () => {
     const createJob = jest.fn().mockResolvedValue(createdJob);
 
     prisma.asset.findUnique.mockResolvedValue(inputAsset);
+    prisma.generateJob.update.mockResolvedValue({
+      id: 'job-2',
+      status: JobStatus.QUEUED,
+      progress: 1,
+      errorMessage: null,
+      startedAt: null,
+      completedAt: null,
+      failedAt: null,
+      updatedAt: now,
+    });
     prisma.$transaction
       .mockImplementationOnce(async (callback: any) =>
         callback({
@@ -214,6 +250,16 @@ describe('JobsService', () => {
     const createJob = jest.fn().mockResolvedValue(createdJob);
 
     prisma.asset.findUnique.mockResolvedValue(inputAsset);
+    prisma.generateJob.update.mockResolvedValue({
+      id: 'job-budget',
+      status: JobStatus.QUEUED,
+      progress: 1,
+      errorMessage: null,
+      startedAt: null,
+      completedAt: null,
+      failedAt: null,
+      updatedAt: now,
+    });
     prisma.$transaction
       .mockImplementationOnce(async (callback: any) =>
         callback({
@@ -308,6 +354,55 @@ describe('JobsService', () => {
     expect(result.workflow).toBe('I2V');
   });
 
+  it('builds a lightweight stream snapshot with logs and preset metadata', async () => {
+    prisma.generateJob.findFirst.mockResolvedValue({
+      id: 'job-stream',
+      userId: 'user-1',
+      status: JobStatus.PROCESSING,
+      progress: 60,
+      errorMessage: null,
+      provider: 'modal',
+      modelName: 'wan2.2-ti2v-standard',
+      extraConfig: {
+        presetId: 'standard_wan22_ti2v',
+        workflow: 'TI2V',
+      },
+      createdAt: now,
+      updatedAt: now,
+      startedAt: now,
+      completedAt: null,
+      failedAt: null,
+      logs: [
+        {
+          jobId: 'job-stream',
+          message: 'Job queued',
+          createdAt: now,
+        },
+      ],
+    });
+
+    const snapshot = await service.getJobStreamSnapshot('user-1', 'job-stream');
+
+    expect(snapshot).toEqual(
+      expect.objectContaining({
+        jobId: 'job-stream',
+        status: JobStatus.PROCESSING,
+        progress: 60,
+        provider: 'modal',
+        modelName: 'wan2.2-ti2v-standard',
+        presetId: 'standard_wan22_ti2v',
+        workflow: 'TI2V',
+        logs: [
+          {
+            jobId: 'job-stream',
+            message: 'Job queued',
+            createdAt: now.toISOString(),
+          },
+        ],
+      }),
+    );
+  });
+
   it('allows cancelling a processing job and refunds only once', async () => {
     prisma.generateJob.findFirst.mockResolvedValue({
       id: 'job-1',
@@ -319,6 +414,16 @@ describe('JobsService', () => {
       remove: jest.fn().mockRejectedValue(new Error('job active')),
     });
     prisma.creditTransaction.findFirst.mockResolvedValue(null);
+    prisma.generateJob.update.mockResolvedValue({
+      id: 'job-1',
+      status: JobStatus.CANCELLED,
+      progress: 50,
+      errorMessage: 'Cancelled by user',
+      startedAt: null,
+      completedAt: null,
+      failedAt: now,
+      updatedAt: now,
+    });
     prisma.$transaction.mockImplementation(async (callback: any) =>
       callback({
         generateJob: {

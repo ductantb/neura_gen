@@ -1,4 +1,5 @@
 import { JobStatus } from '@prisma/client';
+import { JobEventsService } from 'src/modules/jobs/job-events.service';
 import { VideoWorker } from './video.worker';
 
 describe('VideoWorker', () => {
@@ -41,14 +42,27 @@ describe('VideoWorker', () => {
     delete: jest.fn(),
   };
 
+  const jobEvents = {
+    emitStatus: jest.fn(),
+    emitLog: jest.fn(),
+  };
+
   let worker: VideoWorker;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    prisma.jobLog.create.mockImplementation(({ data }: any) =>
+      Promise.resolve({
+        jobId: data.jobId,
+        message: data.message,
+        createdAt: new Date('2026-03-31T00:00:00.000Z'),
+      }),
+    );
     worker = new VideoWorker(
       prisma as any,
       modal as any,
       storageService as any,
+      jobEvents as unknown as JobEventsService,
     );
 
     prisma.generateJob.findUnique.mockResolvedValue({
@@ -76,6 +90,18 @@ describe('VideoWorker', () => {
       url: 'https://signed.example/input.png',
       expiresIn: 3600,
     });
+    prisma.generateJob.update.mockImplementation(({ where, data }: any) =>
+      Promise.resolve({
+        id: where.id,
+        status: data.status,
+        progress: data.progress,
+        errorMessage: data.errorMessage ?? null,
+        startedAt: data.startedAt ?? null,
+        completedAt: data.completedAt ?? null,
+        failedAt: data.failedAt ?? null,
+        updatedAt: new Date('2026-03-31T00:00:00.000Z'),
+      }),
+    );
   });
 
   it('requeues a failed job before the final attempt without refunding credits', async () => {
@@ -103,6 +129,13 @@ describe('VideoWorker', () => {
         data: expect.objectContaining({
           status: JobStatus.QUEUED,
         }),
+      }),
+    );
+    expect(jobEvents.emitStatus).toHaveBeenCalled();
+    expect(jobEvents.emitLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobId: 'job-1',
+        message: expect.stringContaining('retrying'),
       }),
     );
     expect(prisma.creditTransaction.findFirst).not.toHaveBeenCalled();
@@ -146,6 +179,13 @@ describe('VideoWorker', () => {
             increment: 10,
           },
         },
+      }),
+    );
+    expect(jobEvents.emitStatus).toHaveBeenCalled();
+    expect(jobEvents.emitLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobId: 'job-1',
+        message: expect.stringContaining('failed permanently'),
       }),
     );
   });

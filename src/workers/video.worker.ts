@@ -10,6 +10,7 @@ import {
 } from '@prisma/client';
 import { StorageService } from 'src/infra/storage/storage.service';
 import { PrismaService } from 'src/infra/prisma/prisma.service';
+import { JobEventsService } from 'src/modules/jobs/job-events.service';
 import { ModalService } from 'src/modules/modal/modal.service';
 import { generateThumbnailFromVideoBuffer } from 'src/utils/video-thumbnail.util';
 
@@ -29,13 +30,20 @@ export class VideoWorker implements OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly modal: ModalService,
     private readonly storageService: StorageService,
+    private readonly jobEvents: JobEventsService,
   ) {}
 
   // create job log
   // Purpose: Save a log message related to a job into DB
   private async log(jobId: string, message: string) {
-    await this.prisma.jobLog.create({
+    const logEntry = await this.prisma.jobLog.create({
       data: { jobId, message },
+    });
+
+    this.jobEvents.emitLog({
+      jobId,
+      message,
+      createdAt: logEntry.createdAt.toISOString(),
     });
   }
 
@@ -53,7 +61,7 @@ export class VideoWorker implements OnModuleDestroy {
       failedAt: Date;
     }>,
   ) {
-    await this.prisma.generateJob.update({
+    const updatedJob = await this.prisma.generateJob.update({
       where: { id: jobId },
       data: {
         status,
@@ -61,6 +69,17 @@ export class VideoWorker implements OnModuleDestroy {
         // Spread extra fields if provided (timestamps, error message)
         ...(extra ? extra : {}),
       },
+    });
+
+    this.jobEvents.emitStatus({
+      jobId: updatedJob.id,
+      status: updatedJob.status,
+      progress: updatedJob.progress,
+      errorMessage: updatedJob.errorMessage,
+      startedAt: updatedJob.startedAt?.toISOString() ?? null,
+      completedAt: updatedJob.completedAt?.toISOString() ?? null,
+      failedAt: updatedJob.failedAt?.toISOString() ?? null,
+      occurredAt: updatedJob.updatedAt.toISOString(),
     });
   }
 

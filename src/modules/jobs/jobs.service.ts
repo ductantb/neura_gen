@@ -16,6 +16,7 @@ import { Queue } from 'bullmq';
 import { VIDEO_QUEUE } from 'src/common/constants';
 import { StorageService } from 'src/infra/storage/storage.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
+import { JobEventsService, type JobSnapshotPayload } from './job-events.service';
 import { CreateVideoJobDto } from './dto/create-job.dto';
 import {
   resolveVideoPreset,
@@ -43,6 +44,7 @@ export class JobsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storageService: StorageService,
+    private readonly jobEvents: JobEventsService,
     @Inject(VIDEO_QUEUE) private readonly videoQueue: Queue,
   ) {}
 
@@ -151,8 +153,23 @@ export class JobsService {
       const message =
         error instanceof Error ? error.message : 'Unknown queue error';
 
+      let failedStatusPayload:
+        | {
+            jobId: string;
+            status: JobStatus;
+            progress: number;
+            errorMessage: string | null;
+            startedAt: string | null;
+            completedAt: string | null;
+            failedAt: string | null;
+            occurredAt: string;
+          }
+        | null = null;
+      let failedLogPayload: { jobId: string; message: string; createdAt: string } | null =
+        null;
+
       await this.prisma.$transaction(async (tx) => {
-        await tx.generateJob.update({
+        const failedJob = await tx.generateJob.update({
           where: { id: createdJob.id },
           data: {
             status: JobStatus.FAILED,
@@ -160,6 +177,8 @@ export class JobsService {
             failedAt: new Date(),
           },
         });
+
+        failedStatusPayload = this.buildStatusPayload(failedJob);
 
         await this.refundCreditIfMissing(
           tx,
@@ -171,21 +190,46 @@ export class JobsService {
           },
         );
 
-        await tx.jobLog.create({
+        const logEntry = await tx.jobLog.create({
           data: {
             jobId: createdJob.id,
             message: `Queue enqueue failed: ${message}`,
           },
         });
+
+        failedLogPayload = this.buildLogPayload(logEntry);
       });
+
+      if (failedStatusPayload) {
+        this.jobEvents.emitStatus(failedStatusPayload);
+      }
+
+      if (failedLogPayload) {
+        this.jobEvents.emitLog(failedLogPayload);
+      }
 
       throw new ServiceUnavailableException(
         'Failed to queue video job. Credits were refunded.',
       );
     }
 
+    let queuedStatusPayload:
+      | {
+          jobId: string;
+          status: JobStatus;
+          progress: number;
+          errorMessage: string | null;
+          startedAt: string | null;
+          completedAt: string | null;
+          failedAt: string | null;
+          occurredAt: string;
+        }
+      | null = null;
+    let queuedLogPayload: { jobId: string; message: string; createdAt: string } | null =
+      null;
+
     await this.prisma.$transaction(async (tx) => {
-      await tx.generateJob.update({
+      const queuedJob = await tx.generateJob.update({
         where: { id: createdJob.id },
         data: {
           status: JobStatus.QUEUED,
@@ -193,13 +237,25 @@ export class JobsService {
         },
       });
 
-      await tx.jobLog.create({
+      queuedStatusPayload = this.buildStatusPayload(queuedJob);
+
+      const logEntry = await tx.jobLog.create({
         data: {
           jobId: createdJob.id,
           message: 'Job queued',
         },
       });
+
+      queuedLogPayload = this.buildLogPayload(logEntry);
     });
+
+    if (queuedStatusPayload) {
+      this.jobEvents.emitStatus(queuedStatusPayload);
+    }
+
+    if (queuedLogPayload) {
+      this.jobEvents.emitLog(queuedLogPayload);
+    }
 
     return {
       jobId: createdJob.id,
@@ -455,6 +511,30 @@ export class JobsService {
     };
   }
 
+  async getJobStreamSnapshot(
+    userId: string,
+    id: string,
+  ): Promise<JobSnapshotPayload> {
+    const job = await this.prisma.generateJob.findFirst({
+      where: {
+        id,
+        userId,
+      },
+      include: {
+        logs: {
+          orderBy: { createdAt: 'asc' },
+          take: 50,
+        },
+      },
+    });
+
+    if (!job) {
+      throw new NotFoundException('Job not found');
+    }
+
+    return this.buildSnapshotPayload(job);
+  }
+
   async cancelJob(userId: string, jobId: string) {
     const job = await this.prisma.generateJob.findFirst({
       where: { id: jobId, userId },
@@ -481,18 +561,40 @@ export class JobsService {
       try {
         await bullJob.remove();
       } catch {
-        await this.prisma.jobLog.create({
+        const logEntry = await this.prisma.jobLog.create({
           data: {
             jobId: job.id,
             message:
               'Job marked as cancelled while an active worker was still running',
           },
         });
+
+        this.jobEvents.emitLog(this.buildLogPayload(logEntry));
       }
     }
 
+    let cancelledStatusPayload:
+      | {
+          jobId: string;
+          status: JobStatus;
+          progress: number;
+          errorMessage: string | null;
+          startedAt: string | null;
+          completedAt: string | null;
+          failedAt: string | null;
+          occurredAt: string;
+        }
+      | null = null;
+    let cancelledLogPayload:
+      | {
+          jobId: string;
+          message: string;
+          createdAt: string;
+        }
+      | null = null;
+
     await this.prisma.$transaction(async (tx) => {
-      await tx.generateJob.update({
+      const cancelledJob = await tx.generateJob.update({
         where: { id: job.id },
         data: {
           status: JobStatus.CANCELLED,
@@ -501,6 +603,8 @@ export class JobsService {
         },
       });
 
+      cancelledStatusPayload = this.buildStatusPayload(cancelledJob);
+
       await this.refundCreditIfMissing(
         tx,
         job,
@@ -508,18 +612,95 @@ export class JobsService {
         { jobId: job.id },
       );
 
-      await tx.jobLog.create({
+      const logEntry = await tx.jobLog.create({
         data: {
           jobId: job.id,
           message: 'Job canceled by user',
         },
       });
+
+      cancelledLogPayload = this.buildLogPayload(logEntry);
     });
+
+    if (cancelledStatusPayload) {
+      this.jobEvents.emitStatus(cancelledStatusPayload);
+    }
+
+    if (cancelledLogPayload) {
+      this.jobEvents.emitLog(cancelledLogPayload);
+    }
 
     return {
       jobId: job.id,
       status: JobStatus.CANCELLED,
       refundedCredit: job.creditCost,
+    };
+  }
+
+  private buildSnapshotPayload(job: {
+    id: string;
+    status: JobStatus;
+    progress: number;
+    errorMessage: string | null;
+    provider: string | null;
+    modelName: string | null;
+    extraConfig: Prisma.JsonValue | null;
+    createdAt: Date;
+    updatedAt: Date;
+    startedAt: Date | null;
+    completedAt: Date | null;
+    failedAt: Date | null;
+    logs: Array<{
+      jobId: string;
+      message: string;
+      createdAt: Date;
+    }>;
+  }): JobSnapshotPayload {
+    return {
+      jobId: job.id,
+      status: job.status,
+      progress: job.progress,
+      errorMessage: job.errorMessage,
+      provider: job.provider,
+      modelName: job.modelName,
+      presetId: this.extractPresetId(job.extraConfig),
+      workflow: this.extractWorkflow(job.extraConfig),
+      createdAt: job.createdAt.toISOString(),
+      updatedAt: job.updatedAt.toISOString(),
+      startedAt: job.startedAt?.toISOString() ?? null,
+      completedAt: job.completedAt?.toISOString() ?? null,
+      failedAt: job.failedAt?.toISOString() ?? null,
+      logs: job.logs.map((log) => this.buildLogPayload(log)),
+    };
+  }
+
+  private buildStatusPayload(job: {
+    id: string;
+    status: JobStatus;
+    progress: number;
+    errorMessage: string | null;
+    startedAt: Date | null;
+    completedAt: Date | null;
+    failedAt: Date | null;
+    updatedAt: Date;
+  }) {
+    return {
+      jobId: job.id,
+      status: job.status,
+      progress: job.progress,
+      errorMessage: job.errorMessage,
+      startedAt: job.startedAt?.toISOString() ?? null,
+      completedAt: job.completedAt?.toISOString() ?? null,
+      failedAt: job.failedAt?.toISOString() ?? null,
+      occurredAt: job.updatedAt.toISOString(),
+    };
+  }
+
+  private buildLogPayload(log: { jobId: string; message: string; createdAt: Date }) {
+    return {
+      jobId: log.jobId,
+      message: log.message,
+      createdAt: log.createdAt.toISOString(),
     };
   }
 
