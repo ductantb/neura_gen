@@ -1,25 +1,13 @@
 import { Module } from '@nestjs/common';
-import { HttpModule } from '@nestjs/axios';
 import { JobsController } from './jobs.controller';
+import { JobEventsService } from './job-events.service';
 import { JobsService } from './jobs.service';
-import { Redis } from 'ioredis';
-import { Queue } from 'bullmq';
-import { REDIS_CLIENT, VIDEO_QUEUE } from 'src/common/constants';
-import { ModalService } from '../modal/modal.service';
+import { QueueModule } from 'src/infra/queue/queue.module';
 
 @Module({
-  imports: [HttpModule],
+  imports: [QueueModule],
   controllers: [JobsController],
-  providers: [
-    JobsService,
-    ModalService,
-    {
-      provide: VIDEO_QUEUE,
-      useFactory: (redis: Redis) =>
-        new Queue('video-gen', { connection: redis }),
-      inject: [REDIS_CLIENT],
-    },
-  ],
-  exports: [JobsService],
+  providers: [JobsService, JobEventsService],
+  exports: [JobsService, JobEventsService],
 })
 export class JobsModule {}

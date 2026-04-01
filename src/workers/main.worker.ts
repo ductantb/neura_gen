@@ -10,10 +10,14 @@ async function bootstrap() {
   const redis = app.get<Redis>(REDIS_CLIENT);
   const worker = app.get(VideoWorker);
 
-  await worker.start(redis);
+  const started = await worker.start(redis);
 
   // eslint-disable-next-line no-console
-  console.log('✅ Worker started');
+  console.log(
+    started
+      ? ' Worker started'
+      : 'Worker disabled because RUN_WORKER is not set to "true"',
+  );
 }
 
 bootstrap().catch((e) => {

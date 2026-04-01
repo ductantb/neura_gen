@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsUUID } from "class-validator";
+import { IsOptional, IsString, IsUUID } from 'class-validator';
 
 export class CreateVideoJobDto {
   @IsUUID()
@@ -10,4 +10,8 @@ export class CreateVideoJobDto {
   @IsOptional()
   @IsString()
   negativePrompt?: string;
+
+  @IsOptional()
+  @IsString()
+  presetId?: string;
 }

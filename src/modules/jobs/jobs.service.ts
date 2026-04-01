@@ -1,144 +1,271 @@
-import { BadRequestException, Inject, Injectable, NotFoundException,} from '@nestjs/common';
-import { AssetRole, JobStatus, JobType, CreditReason } from '@prisma/client';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
+import {
+  AssetRole,
+  CreditReason,
+  JobStatus,
+  JobType,
+  Prisma,
+} from '@prisma/client';
 import { Queue } from 'bullmq';
-import { PrismaService } from '../../infra/prisma/prisma.service';
 import { VIDEO_QUEUE } from 'src/common/constants';
-import { CreateVideoJobDto } from './dto/create-job.dto';
 import { StorageService } from 'src/infra/storage/storage.service';
+import { PrismaService } from '../../infra/prisma/prisma.service';
+import { JobEventsService, type JobSnapshotPayload } from './job-events.service';
+import { CreateVideoJobDto } from './dto/create-job.dto';
+import {
+  resolveVideoPreset,
+  type VideoGenerationPresetId,
+  type VideoGenerationWorkflow,
+} from './video-generation.catalog';
+
+type AssetWithLatestVersion = {
+  id: string;
+  userId: string;
+  role: AssetRole;
+  versions: Array<{
+    bucket: string;
+    objectKey: string;
+    mimeType: string | null;
+    sizeBytes: number | null;
+    createdAt: Date;
+  }>;
+};
 
 @Injectable()
 export class JobsService {
-
-  private readonly VIDEO_JOB_CREDIT_COST =  10; // Admin không bị trừ credit
+  private readonly VIDEO_JOB_CREDIT_COST = 10;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly storageService: StorageService,
+    private readonly jobEvents: JobEventsService,
     @Inject(VIDEO_QUEUE) private readonly videoQueue: Queue,
   ) {}
 
   async createVideoJob(userId: string, dto: CreateVideoJobDto) {
-  const inputAsset = await this.prisma.asset.findUnique({
-    where: { id: dto.inputAssetId },
-    include: {
-      versions: {
-        orderBy: { version: 'desc' },
-        take: 1,
-      },
-    },
-  });
-
-  if (!inputAsset) {
-    throw new NotFoundException('Input asset not found');
-  }
-
-  if (inputAsset.userId !== userId) {
-    throw new BadRequestException('Input asset does not belong to the user');
-  }
-
-  if (inputAsset.role !== AssetRole.INPUT) {
-    throw new BadRequestException("Asset role must be 'INPUT'");
-  }
-
-  if (inputAsset.versions.length === 0) {
-    throw new BadRequestException('Input asset has no versions');
-  }
-
-  
-
-  const result = await this.prisma.$transaction(async (tx) => {
-    const wallet = await tx.userCredit.findUnique({
-      where: { userId },
-    });
-
-    if (!wallet) {
-      throw new NotFoundException('User credit wallet not found');
-    }
-
-    if (wallet.balance < this.VIDEO_JOB_CREDIT_COST) {
-      throw new BadRequestException('Not enough credit');
-    }
-
-    await tx.userCredit.update({
-      where: { userId },
-      data: {
-        balance: {
-          decrement: this.VIDEO_JOB_CREDIT_COST,
+    const preset = resolveVideoPreset(dto.presetId);
+    const inputAsset = await this.prisma.asset.findUnique({
+      where: { id: dto.inputAssetId },
+      include: {
+        versions: {
+          orderBy: { version: 'desc' },
+          take: 1,
         },
       },
     });
 
-    await tx.creditTransaction.create({
-      data: {
-        userId,
-        amount: -this.VIDEO_JOB_CREDIT_COST,
-        reason: CreditReason.CREATE_IMAGE_TO_VIDEO_JOB,
-        metadata: {
-          inputAssetId: dto.inputAssetId,
+    if (!inputAsset) {
+      throw new NotFoundException('Input asset not found');
+    }
+
+    if (inputAsset.userId !== userId) {
+      throw new BadRequestException('Input asset does not belong to the user');
+    }
+
+    if (inputAsset.role !== AssetRole.INPUT) {
+      throw new BadRequestException("Asset role must be 'INPUT'");
+    }
+
+    if (inputAsset.versions.length === 0) {
+      throw new BadRequestException('Input asset has no versions');
+    }
+
+    const createdJob = await this.prisma.$transaction(async (tx) => {
+      const wallet = await tx.userCredit.findUnique({
+        where: { userId },
+      });
+
+      if (!wallet) {
+        throw new NotFoundException('User credit wallet not found');
+      }
+
+      if (wallet.balance < this.VIDEO_JOB_CREDIT_COST) {
+        throw new BadRequestException('Not enough credit');
+      }
+
+      await tx.userCredit.update({
+        where: { userId },
+        data: {
+          balance: {
+            decrement: this.VIDEO_JOB_CREDIT_COST,
+          },
+        },
+      });
+
+      await tx.creditTransaction.create({
+        data: {
+          userId,
+          amount: -this.VIDEO_JOB_CREDIT_COST,
+          reason: CreditReason.CREATE_IMAGE_TO_VIDEO_JOB,
+          metadata: {
+            inputAssetId: dto.inputAssetId,
+            prompt: dto.prompt,
+          },
+        },
+      });
+
+      return tx.generateJob.create({
+        data: {
+          userId,
+          type: JobType.IMAGE_TO_VIDEO,
+          status: JobStatus.PENDING,
           prompt: dto.prompt,
+          negativePrompt: dto.negativePrompt,
+          modelName: preset.modelName,
+          turboEnabled: preset.turboEnabled,
+          progress: 0,
+          creditCost: this.VIDEO_JOB_CREDIT_COST,
+          provider: preset.provider,
+          extraConfig: {
+            inputAssetId: dto.inputAssetId,
+            presetId: preset.id,
+            workflow: preset.workflow,
+          },
+          logs: {
+            create: [
+              { message: 'Job created' },
+              { message: `Input asset: ${inputAsset.id}` },
+              { message: `Credit charged: ${this.VIDEO_JOB_CREDIT_COST}` },
+              { message: `Preset selected: ${preset.id}` },
+            ],
+          },
         },
-      },
+      });
     });
 
-    const job = await tx.generateJob.create({
-      data: {
-        userId,
-        type: JobType.IMAGE_TO_VIDEO,
-        status: JobStatus.PENDING,
-        prompt: dto.prompt,
-        negativePrompt: dto.negativePrompt,
-        modelName: 'default-model',
-        turboEnabled: false,
-        progress: 0,
-        creditCost: this.VIDEO_JOB_CREDIT_COST,
-        extraConfig: {
-          inputAssetId: dto.inputAssetId,
+    try {
+      await this.videoQueue.add(
+        'generate-video',
+        { jobId: createdJob.id },
+        {
+          jobId: createdJob.id,
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 1000 },
         },
-        assets: {
-          connect: [{ id: inputAsset.id }],
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unknown queue error';
+
+      let failedStatusPayload:
+        | {
+            jobId: string;
+            status: JobStatus;
+            progress: number;
+            errorMessage: string | null;
+            startedAt: string | null;
+            completedAt: string | null;
+            failedAt: string | null;
+            occurredAt: string;
+          }
+        | null = null;
+      let failedLogPayload: { jobId: string; message: string; createdAt: string } | null =
+        null;
+
+      await this.prisma.$transaction(async (tx) => {
+        const failedJob = await tx.generateJob.update({
+          where: { id: createdJob.id },
+          data: {
+            status: JobStatus.FAILED,
+            errorMessage: `Queue enqueue failed: ${message}`,
+            failedAt: new Date(),
+          },
+        });
+
+        failedStatusPayload = this.buildStatusPayload(failedJob);
+
+        await this.refundCreditIfMissing(
+          tx,
+          createdJob,
+          CreditReason.REFUND_FAILED_JOB,
+          {
+            jobId: createdJob.id,
+            failedMessage: `Queue enqueue failed: ${message}`,
+          },
+        );
+
+        const logEntry = await tx.jobLog.create({
+          data: {
+            jobId: createdJob.id,
+            message: `Queue enqueue failed: ${message}`,
+          },
+        });
+
+        failedLogPayload = this.buildLogPayload(logEntry);
+      });
+
+      if (failedStatusPayload) {
+        this.jobEvents.emitStatus(failedStatusPayload);
+      }
+
+      if (failedLogPayload) {
+        this.jobEvents.emitLog(failedLogPayload);
+      }
+
+      throw new ServiceUnavailableException(
+        'Failed to queue video job. Credits were refunded.',
+      );
+    }
+
+    let queuedStatusPayload:
+      | {
+          jobId: string;
+          status: JobStatus;
+          progress: number;
+          errorMessage: string | null;
+          startedAt: string | null;
+          completedAt: string | null;
+          failedAt: string | null;
+          occurredAt: string;
+        }
+      | null = null;
+    let queuedLogPayload: { jobId: string; message: string; createdAt: string } | null =
+      null;
+
+    await this.prisma.$transaction(async (tx) => {
+      const queuedJob = await tx.generateJob.update({
+        where: { id: createdJob.id },
+        data: {
+          status: JobStatus.QUEUED,
+          progress: 1,
         },
-        logs: {
-          create: [
-            { message: 'Job created' },
-            { message: `Input asset: ${inputAsset.id}` },
-            { message: `Credit charged: ${this.VIDEO_JOB_CREDIT_COST}` },
-          ],
+      });
+
+      queuedStatusPayload = this.buildStatusPayload(queuedJob);
+
+      const logEntry = await tx.jobLog.create({
+        data: {
+          jobId: createdJob.id,
+          message: 'Job queued',
         },
-      },
+      });
+
+      queuedLogPayload = this.buildLogPayload(logEntry);
     });
 
-    await tx.asset.update({
-      where: { id: inputAsset.id },
-      data: { jobId: job.id },
-    });
+    if (queuedStatusPayload) {
+      this.jobEvents.emitStatus(queuedStatusPayload);
+    }
 
-    await tx.generateJob.update({
-      where: { id: job.id },
-      data: {
-        status: JobStatus.QUEUED,
-        progress: 1,
-      },
-    });
+    if (queuedLogPayload) {
+      this.jobEvents.emitLog(queuedLogPayload);
+    }
 
-    return job;
-  });
-
-  await this.videoQueue.add(
-    'generate-video',
-    { jobId: result.id },
-    {
-      jobId: result.id,
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 1000 },
-    },
-  );
-
-  return {
-    jobId: result.id,
-    status: JobStatus.QUEUED,
-    creditCost: result.creditCost,
-  };
-}
+    return {
+      jobId: createdJob.id,
+      status: JobStatus.QUEUED,
+      creditCost: createdJob.creditCost,
+      provider: createdJob.provider,
+      modelName: createdJob.modelName,
+      presetId: preset.id,
+    };
+  }
 
   async listMyJobs(userId: string) {
     const jobs = await this.prisma.generateJob.findMany({
@@ -156,13 +283,11 @@ export class JobsService {
       },
     });
 
-
     return Promise.all(
       jobs.map(async (job) => {
         const outputAsset = job.assets.find((a) => a.role === AssetRole.OUTPUT);
         const latestOutputVersion = outputAsset?.versions?.[0];
-        
-        // có thể sửa sau 
+
         let output: any = null;
 
         if (latestOutputVersion) {
@@ -179,25 +304,26 @@ export class JobsService {
           };
         }
 
-        const thumbnailAsset = job.assets.find((a) => a.role === AssetRole.THUMBNAIL);
+        const thumbnailAsset = job.assets.find(
+          (a) => a.role === AssetRole.THUMBNAIL,
+        );
         const latestThumbnailVersion = thumbnailAsset?.versions?.[0];
 
-          // có thể sửa sau
-          let thumbnail: any = null;
+        let thumbnail: any = null;
 
-          if (latestThumbnailVersion) {
-            const signedThumb = await this.storageService.getDownloadSignedUrl(
-              latestThumbnailVersion.objectKey,
-              3600,
-            );
+        if (latestThumbnailVersion) {
+          const signedThumb = await this.storageService.getDownloadSignedUrl(
+            latestThumbnailVersion.objectKey,
+            3600,
+          );
 
-            thumbnail = {
-              assetId: thumbnailAsset?.id,
-              mimeType: latestThumbnailVersion.mimeType,
-              downloadUrl: signedThumb.url,
-              expiresIn: signedThumb.expiresIn,
-            };
-          }
+          thumbnail = {
+            assetId: thumbnailAsset?.id,
+            mimeType: latestThumbnailVersion.mimeType,
+            downloadUrl: signedThumb.url,
+            expiresIn: signedThumb.expiresIn,
+          };
+        }
 
         return {
           id: job.id,
@@ -205,7 +331,10 @@ export class JobsService {
           status: job.status,
           progress: job.progress,
           prompt: job.prompt,
+          provider: job.provider,
           modelName: job.modelName,
+          presetId: this.extractPresetId(job.extraConfig),
+          workflow: this.extractWorkflow(job.extraConfig),
           createdAt: job.createdAt,
           updatedAt: job.updatedAt,
           output,
@@ -240,12 +369,13 @@ export class JobsService {
       throw new NotFoundException('Job not found');
     }
 
-    const inputAssets = job.assets.filter((a) => a.role === AssetRole.INPUT);
+    const inputAssets = await this.resolveInputAssets(job);
     const outputAssets = job.assets.filter((a) => a.role === AssetRole.OUTPUT);
+    const thumbnailAssets = job.assets.filter(
+      (a) => a.role === AssetRole.THUMBNAIL,
+    );
 
     const output = await this.buildOutputResult(outputAssets[0]);
-
-    const thumbnailAssets = job.assets.filter((a) => a.role === AssetRole.THUMBNAIL);
     const thumbnail = await this.buildOutputResult(thumbnailAssets[0]);
 
     return {
@@ -255,7 +385,10 @@ export class JobsService {
       progress: job.progress,
       prompt: job.prompt,
       negativePrompt: job.negativePrompt,
+      provider: job.provider,
       modelName: job.modelName,
+      presetId: this.extractPresetId(job.extraConfig),
+      workflow: this.extractWorkflow(job.extraConfig),
       creditCost: job.creditCost,
       errorMessage: job.errorMessage,
       createdAt: job.createdAt,
@@ -322,7 +455,9 @@ export class JobsService {
       3600,
     );
 
-    const thumbnailAsset = job.assets.find((a) => a.role === AssetRole.THUMBNAIL);
+    const thumbnailAsset = job.assets.find(
+      (a) => a.role === AssetRole.THUMBNAIL,
+    );
     const thumbnailVersion = thumbnailAsset?.versions?.[0];
 
     let thumbnail: {
@@ -360,6 +495,10 @@ export class JobsService {
       progress: job.progress,
       creditCost: job.creditCost,
       resultReady: job.status === JobStatus.COMPLETED,
+      provider: job.provider,
+      modelName: job.modelName,
+      presetId: this.extractPresetId(job.extraConfig),
+      workflow: this.extractWorkflow(job.extraConfig),
       assetId: outputAsset.id,
       bucket: latestVersion.bucket,
       objectKey: latestVersion.objectKey,
@@ -369,6 +508,199 @@ export class JobsService {
       expiresIn: signed.expiresIn,
       createdAt: latestVersion.createdAt,
       thumbnail,
+    };
+  }
+
+  async getJobStreamSnapshot(
+    userId: string,
+    id: string,
+  ): Promise<JobSnapshotPayload> {
+    const job = await this.prisma.generateJob.findFirst({
+      where: {
+        id,
+        userId,
+      },
+      include: {
+        logs: {
+          orderBy: { createdAt: 'asc' },
+          take: 50,
+        },
+      },
+    });
+
+    if (!job) {
+      throw new NotFoundException('Job not found');
+    }
+
+    return this.buildSnapshotPayload(job);
+  }
+
+  async cancelJob(userId: string, jobId: string) {
+    const job = await this.prisma.generateJob.findFirst({
+      where: { id: jobId, userId },
+    });
+
+    if (!job) {
+      throw new NotFoundException('Job not found');
+    }
+
+    if (job.status === JobStatus.COMPLETED) {
+      throw new BadRequestException('Completed job cannot be canceled');
+    }
+
+    if (job.status === JobStatus.FAILED) {
+      throw new BadRequestException('Failed job cannot be canceled');
+    }
+
+    if (job.status === JobStatus.CANCELLED) {
+      throw new BadRequestException('Job already canceled');
+    }
+
+    const bullJob = await this.videoQueue.getJob(job.id);
+    if (bullJob) {
+      try {
+        await bullJob.remove();
+      } catch {
+        const logEntry = await this.prisma.jobLog.create({
+          data: {
+            jobId: job.id,
+            message:
+              'Job marked as cancelled while an active worker was still running',
+          },
+        });
+
+        this.jobEvents.emitLog(this.buildLogPayload(logEntry));
+      }
+    }
+
+    let cancelledStatusPayload:
+      | {
+          jobId: string;
+          status: JobStatus;
+          progress: number;
+          errorMessage: string | null;
+          startedAt: string | null;
+          completedAt: string | null;
+          failedAt: string | null;
+          occurredAt: string;
+        }
+      | null = null;
+    let cancelledLogPayload:
+      | {
+          jobId: string;
+          message: string;
+          createdAt: string;
+        }
+      | null = null;
+
+    await this.prisma.$transaction(async (tx) => {
+      const cancelledJob = await tx.generateJob.update({
+        where: { id: job.id },
+        data: {
+          status: JobStatus.CANCELLED,
+          errorMessage: 'Cancelled by user',
+          failedAt: new Date(),
+        },
+      });
+
+      cancelledStatusPayload = this.buildStatusPayload(cancelledJob);
+
+      await this.refundCreditIfMissing(
+        tx,
+        job,
+        CreditReason.REFUND_CANCELED_JOB,
+        { jobId: job.id },
+      );
+
+      const logEntry = await tx.jobLog.create({
+        data: {
+          jobId: job.id,
+          message: 'Job canceled by user',
+        },
+      });
+
+      cancelledLogPayload = this.buildLogPayload(logEntry);
+    });
+
+    if (cancelledStatusPayload) {
+      this.jobEvents.emitStatus(cancelledStatusPayload);
+    }
+
+    if (cancelledLogPayload) {
+      this.jobEvents.emitLog(cancelledLogPayload);
+    }
+
+    return {
+      jobId: job.id,
+      status: JobStatus.CANCELLED,
+      refundedCredit: job.creditCost,
+    };
+  }
+
+  private buildSnapshotPayload(job: {
+    id: string;
+    status: JobStatus;
+    progress: number;
+    errorMessage: string | null;
+    provider: string | null;
+    modelName: string | null;
+    extraConfig: Prisma.JsonValue | null;
+    createdAt: Date;
+    updatedAt: Date;
+    startedAt: Date | null;
+    completedAt: Date | null;
+    failedAt: Date | null;
+    logs: Array<{
+      jobId: string;
+      message: string;
+      createdAt: Date;
+    }>;
+  }): JobSnapshotPayload {
+    return {
+      jobId: job.id,
+      status: job.status,
+      progress: job.progress,
+      errorMessage: job.errorMessage,
+      provider: job.provider,
+      modelName: job.modelName,
+      presetId: this.extractPresetId(job.extraConfig),
+      workflow: this.extractWorkflow(job.extraConfig),
+      createdAt: job.createdAt.toISOString(),
+      updatedAt: job.updatedAt.toISOString(),
+      startedAt: job.startedAt?.toISOString() ?? null,
+      completedAt: job.completedAt?.toISOString() ?? null,
+      failedAt: job.failedAt?.toISOString() ?? null,
+      logs: job.logs.map((log) => this.buildLogPayload(log)),
+    };
+  }
+
+  private buildStatusPayload(job: {
+    id: string;
+    status: JobStatus;
+    progress: number;
+    errorMessage: string | null;
+    startedAt: Date | null;
+    completedAt: Date | null;
+    failedAt: Date | null;
+    updatedAt: Date;
+  }) {
+    return {
+      jobId: job.id,
+      status: job.status,
+      progress: job.progress,
+      errorMessage: job.errorMessage,
+      startedAt: job.startedAt?.toISOString() ?? null,
+      completedAt: job.completedAt?.toISOString() ?? null,
+      failedAt: job.failedAt?.toISOString() ?? null,
+      occurredAt: job.updatedAt.toISOString(),
+    };
+  }
+
+  private buildLogPayload(log: { jobId: string; message: string; createdAt: Date }) {
+    return {
+      jobId: log.jobId,
+      message: log.message,
+      createdAt: log.createdAt.toISOString(),
     };
   }
 
@@ -404,99 +736,108 @@ export class JobsService {
     };
   }
 
-  
-  async cancelJob(userId: string, jobId: string) {
-  const job = await this.prisma.generateJob.findFirst({
-    where: { id: jobId, userId },
-  });
+  private extractInputAssetId(extraConfig: Prisma.JsonValue | null): string | null {
+    if (!extraConfig || typeof extraConfig !== 'object' || Array.isArray(extraConfig)) {
+      return null;
+    }
 
-  if (!job) {
-    throw new NotFoundException('Job not found');
+    const maybeAssetId = (extraConfig as Record<string, unknown>).inputAssetId;
+    return typeof maybeAssetId === 'string' ? maybeAssetId : null;
   }
 
-  if (job.status === JobStatus.COMPLETED) {
-    throw new BadRequestException('Completed job cannot be canceled');
+  private extractPresetId(
+    extraConfig: Prisma.JsonValue | null,
+  ): VideoGenerationPresetId | null {
+    if (!extraConfig || typeof extraConfig !== 'object' || Array.isArray(extraConfig)) {
+      return null;
+    }
+
+    const maybePresetId = (extraConfig as Record<string, unknown>).presetId;
+    return typeof maybePresetId === 'string'
+      ? (maybePresetId as VideoGenerationPresetId)
+      : null;
   }
 
-  if (job.status === JobStatus.FAILED) {
-    throw new BadRequestException('Failed job cannot be canceled');
+  private extractWorkflow(
+    extraConfig: Prisma.JsonValue | null,
+  ): VideoGenerationWorkflow | null {
+    if (!extraConfig || typeof extraConfig !== 'object' || Array.isArray(extraConfig)) {
+      return null;
+    }
+
+    const maybeWorkflow = (extraConfig as Record<string, unknown>).workflow;
+    return typeof maybeWorkflow === 'string'
+      ? (maybeWorkflow as VideoGenerationWorkflow)
+      : null;
   }
 
-  if (job.status === JobStatus.CANCELLED) {
-    throw new BadRequestException('Job already canceled');
-  }
-
-  if (job.status === JobStatus.PROCESSING) {
-    throw new BadRequestException('Processing job cannot be canceled');
-  }
-
-  // 🔥 remove khỏi queue
-  const bullJob = await this.videoQueue.getJob(job.id);
-  if (bullJob) {
-    await bullJob.remove();
-  }
-
-  await this.prisma.$transaction(async (tx) => {
-    // update job
-    await tx.generateJob.update({
-      where: { id: job.id },
-      data: {
-        status: JobStatus.CANCELLED,
-        progress: 0,
-        failedAt: new Date(),
-        errorMessage: 'Cancelled by user',
-      },
-    });
-
-    // refund credit nếu có
-    if (job.creditCost > 0) {
-      const existingRefund = await tx.creditTransaction.findFirst({
-        where: {
-          userId: job.userId,
-          reason: CreditReason.REFUND_CANCELED_JOB,
-          metadata: {
-            path: ['jobId'],
-            equals: job.id,
+  private async resolveInputAssets(job: {
+    id: string;
+    userId: string;
+    extraConfig: Prisma.JsonValue | null;
+    assets: AssetWithLatestVersion[];
+  }): Promise<AssetWithLatestVersion[]> {
+    const inputAssetId = this.extractInputAssetId(job.extraConfig);
+    if (inputAssetId) {
+      const inputAsset = await this.prisma.asset.findUnique({
+        where: { id: inputAssetId },
+        include: {
+          versions: {
+            orderBy: { version: 'desc' },
+            take: 1,
           },
         },
       });
 
-      if (!existingRefund) {
-        await tx.userCredit.update({
-          where: { userId: job.userId },
-          data: {
-            balance: {
-              increment: job.creditCost,
-            },
-          },
-        });
-
-        await tx.creditTransaction.create({
-          data: {
-            userId: job.userId,
-            amount: job.creditCost,
-            reason: CreditReason.REFUND_CANCELED_JOB,
-            metadata: {
-              jobId: job.id,
-            },
-          },
-        });
+      if (inputAsset && inputAsset.userId === job.userId) {
+        return [inputAsset];
       }
     }
 
-    // log
-    await tx.jobLog.create({
-      data: {
-        jobId: job.id,
-        message: 'Job canceled by user',
+    return job.assets.filter((asset) => asset.role === AssetRole.INPUT);
+  }
+
+  private async refundCreditIfMissing(
+    tx: Prisma.TransactionClient,
+    job: { id: string; userId: string; creditCost: number },
+    reason: CreditReason,
+    metadata: Prisma.InputJsonValue,
+  ) {
+    if (job.creditCost <= 0) {
+      return;
+    }
+
+    const existingRefund = await tx.creditTransaction.findFirst({
+      where: {
+        userId: job.userId,
+        reason,
+        metadata: {
+          path: ['jobId'],
+          equals: job.id,
+        },
       },
     });
-  });
 
-  return {
-    jobId: job.id,
-    status: JobStatus.CANCELLED,
-    refundedCredit: job.creditCost,
-  };
-}
+    if (existingRefund) {
+      return;
+    }
+
+    await tx.userCredit.update({
+      where: { userId: job.userId },
+      data: {
+        balance: {
+          increment: job.creditCost,
+        },
+      },
+    });
+
+    await tx.creditTransaction.create({
+      data: {
+        userId: job.userId,
+        amount: job.creditCost,
+        reason,
+        metadata,
+      },
+    });
+  }
 }

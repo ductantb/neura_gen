@@ -74,6 +74,8 @@ With Mau, you can deploy your application in just a few clicks, allowing you to 
 
 Check out a few resources that may come in handy when working with NestJS:
 
+- [Jobs SSE Integration Guide](docs/jobs-sse.md)
+
 - Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
 - For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
 - To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
