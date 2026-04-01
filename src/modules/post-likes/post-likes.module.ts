@@ -5,5 +5,6 @@ import { PostLikesController } from './post-likes.controller';
 @Module({
   controllers: [PostLikesController],
   providers: [PostLikesService],
+  exports: [PostLikesService],
 })
 export class PostLikesModule {}
