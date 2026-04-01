@@ -1,6 +1,13 @@
-import { Injectable } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+} from '@nestjs/common';
 import { JobStatus } from '@prisma/client';
+import Redis from 'ioredis';
 import { Observable, Subject } from 'rxjs';
+import { REDIS_CLIENT } from 'src/common/constants';
 
 export type JobEventType = 'snapshot' | 'status' | 'log' | 'heartbeat';
 
@@ -58,11 +65,19 @@ export type JobStreamEvent =
 type JobEventChannel = {
   subject: Subject<JobStreamEvent>;
   subscribers: number;
+  redisSubscribed: boolean;
 };
 
 @Injectable()
-export class JobEventsService {
+export class JobEventsService implements OnModuleDestroy {
+  private readonly logger = new Logger(JobEventsService.name);
   private readonly channels = new Map<string, JobEventChannel>();
+  private publisher?: Redis;
+  private subscriber?: Redis;
+
+  constructor(
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
+  ) {}
 
   stream(jobId: string): Observable<JobStreamEvent> {
     return new Observable<JobStreamEvent>((subscriber) => {
@@ -70,15 +85,11 @@ export class JobEventsService {
       channel.subscribers += 1;
 
       const subscription = channel.subject.subscribe(subscriber);
+      void this.ensureRedisSubscription(jobId);
 
       return () => {
         subscription.unsubscribe();
-        channel.subscribers -= 1;
-
-        if (channel.subscribers <= 0) {
-          channel.subject.complete();
-          this.channels.delete(jobId);
-        }
+        void this.releaseRedisSubscription(jobId);
       };
     });
   }
@@ -119,8 +130,13 @@ export class JobEventsService {
   }
 
   private emit(event: JobStreamEvent) {
-    const channel = this.channels.get(event.jobId);
-    channel?.subject.next(event);
+    this.publish(event).catch((error: unknown) => {
+      const message =
+        error instanceof Error ? error.message : 'Unknown Redis publish error';
+      this.logger.error(
+        `Failed to publish job event for ${event.jobId}: ${message}`,
+      );
+    });
   }
 
   private ensureChannel(jobId: string): JobEventChannel {
@@ -132,9 +148,132 @@ export class JobEventsService {
     const channel: JobEventChannel = {
       subject: new Subject<JobStreamEvent>(),
       subscribers: 0,
+      redisSubscribed: false,
     };
 
     this.channels.set(jobId, channel);
     return channel;
+  }
+
+  private async ensureRedisSubscription(jobId: string) {
+    const channel = this.ensureChannel(jobId);
+    if (channel.redisSubscribed) {
+      return;
+    }
+
+    const subscriber = this.getSubscriber();
+    await subscriber.subscribe(this.getRedisChannel(jobId));
+    channel.redisSubscribed = true;
+  }
+
+  private async releaseRedisSubscription(jobId: string) {
+    const channel = this.channels.get(jobId);
+    if (!channel) {
+      return;
+    }
+
+    channel.subscribers -= 1;
+    if (channel.subscribers > 0) {
+      return;
+    }
+
+    try {
+      if (channel.redisSubscribed) {
+        await this.getSubscriber().unsubscribe(this.getRedisChannel(jobId));
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unknown Redis unsubscribe error';
+      this.logger.error(
+        `Failed to unsubscribe Redis channel for ${jobId}: ${message}`,
+      );
+    } finally {
+      channel.redisSubscribed = false;
+      channel.subject.complete();
+      this.channels.delete(jobId);
+    }
+  }
+
+  private async publish(event: JobStreamEvent) {
+    const publisher = this.getPublisher();
+    await publisher.publish(
+      this.getRedisChannel(event.jobId),
+      JSON.stringify(event),
+    );
+  }
+
+  private getPublisher() {
+    if (!this.publisher) {
+      this.publisher = this.redis.duplicate();
+      this.publisher.on('error', (error) => {
+        this.logger.error(`Redis publisher error: ${error.message}`);
+      });
+    }
+
+    return this.publisher;
+  }
+
+  private getSubscriber() {
+    if (!this.subscriber) {
+      this.subscriber = this.redis.duplicate();
+      this.subscriber.on('message', this.handleRedisMessage);
+      this.subscriber.on('error', (error) => {
+        this.logger.error(`Redis subscriber error: ${error.message}`);
+      });
+    }
+
+    return this.subscriber;
+  }
+
+  private readonly handleRedisMessage = (channelName: string, message: string) => {
+    const jobId = this.getJobIdFromChannel(channelName);
+    if (!jobId) {
+      return;
+    }
+
+    const channel = this.channels.get(jobId);
+    if (!channel) {
+      return;
+    }
+
+    try {
+      const event = JSON.parse(message) as JobStreamEvent;
+      channel.subject.next(event);
+    } catch (error) {
+      const reason =
+        error instanceof Error ? error.message : 'Unknown JSON parse error';
+      this.logger.error(
+        `Failed to parse Redis SSE payload for ${jobId}: ${reason}`,
+      );
+    }
+  };
+
+  private getRedisChannel(jobId: string) {
+    return `jobs:events:${jobId}`;
+  }
+
+  private getJobIdFromChannel(channelName: string) {
+    const prefix = 'jobs:events:';
+    return channelName.startsWith(prefix)
+      ? channelName.slice(prefix.length)
+      : null;
+  }
+
+  async onModuleDestroy() {
+    for (const channel of this.channels.values()) {
+      channel.subject.complete();
+    }
+    this.channels.clear();
+
+    if (this.subscriber) {
+      this.subscriber.off('message', this.handleRedisMessage);
+      this.subscriber.disconnect();
+      this.subscriber = undefined;
+    }
+
+    if (this.publisher) {
+      this.publisher.disconnect();
+      this.publisher = undefined;
+    }
   }
 }

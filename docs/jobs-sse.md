@@ -410,7 +410,7 @@ Relevant endpoints:
   - `COMPLETED`
   - `FAILED`
   - `CANCELLED`
-- The stream is backed by in-process events plus database snapshot data.
+- The stream is backed by Redis pub/sub plus database snapshot data.
 - If a client is offline and reconnects later, `snapshot` restores the latest state.
 
 ## Suggested FE UX
