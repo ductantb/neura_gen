@@ -64,6 +64,13 @@ export class ModalService {
       return 45 * 60 * 1000;
     }
 
+    if (
+      payload.presetId === HUNYUAN_QUALITY_PRESET_ID ||
+      payload.modelName === HUNYUAN_QUALITY_MODEL_NAME
+    ) {
+      return 60 * 60 * 1000;
+    }
+
     return 10 * 60 * 1000;
   }
 

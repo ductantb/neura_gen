@@ -10,10 +10,13 @@ from pydantic import BaseModel, Field
 MODEL_CACHE_DIR = "/cache"
 LTX_MODEL_ID = "Lightricks/LTX-Video"
 WAN_MODEL_ID = "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
+HUNYUAN_MODEL_ID = "hunyuanvideo-community/HunyuanVideo-I2V-33ch"
 LTX_PREVIEW_MODEL_NAME = "ltx-video-i2v-preview"
 LTX_PREVIEW_PRESET_ID = "preview_ltx_i2v"
 WAN_STANDARD_MODEL_NAME = "wan2.2-ti2v-standard"
 WAN_STANDARD_PRESET_ID = "standard_wan22_ti2v"
+HUNYUAN_QUALITY_MODEL_NAME = "hunyuan-video-i2v-quality"
+HUNYUAN_QUALITY_PRESET_ID = "quality_hunyuan_i2v"
 LTX_TARGET_WIDTH = 832
 LTX_TARGET_HEIGHT = 480
 LTX_NUM_FRAMES = 121
@@ -27,6 +30,15 @@ WAN_NUM_FRAMES = 121
 WAN_NUM_INFERENCE_STEPS = 40
 WAN_GUIDANCE_SCALE = 4.5
 WAN_VIDEO_FPS = 24
+HUNYUAN_LANDSCAPE_WIDTH = 1104
+HUNYUAN_LANDSCAPE_HEIGHT = 624
+HUNYUAN_PORTRAIT_WIDTH = 624
+HUNYUAN_PORTRAIT_HEIGHT = 1104
+HUNYUAN_NUM_FRAMES = 97
+HUNYUAN_NUM_INFERENCE_STEPS = 30
+HUNYUAN_GUIDANCE_SCALE = 6.0
+HUNYUAN_VIDEO_FPS = 24
+HUNYUAN_FLOW_SHIFT = 7.0
 DEFAULT_NEGATIVE_PROMPT = (
     "worst quality, low quality, blurry, jittery, distorted, deformed, flicker"
 )
@@ -51,6 +63,17 @@ WAN_NEGATIVE_PROMPT = (
     "jitter, warped anatomy, broken hands, distorted face, identity drift, subject "
     "duplication, morphing, melting details, unrealistic camera motion, background "
     "warping, overexposed highlights, watermark, text, subtitles, compression artifacts"
+)
+HUNYUAN_QUALITY_PROMPT_SUFFIX = (
+    "Keep the first-frame identity and the original composition highly consistent. "
+    "Generate a polished cinematic image-to-video shot with natural body motion, "
+    "clean facial detail, stable anatomy, believable physics, and smooth camera movement. "
+    "The motion should stay coherent from start to finish without abrupt scene drift."
+)
+HUNYUAN_NEGATIVE_PROMPT = (
+    "low quality, blurry, oversharpened, frame flicker, temporal inconsistency, "
+    "identity drift, broken anatomy, warped face, duplicated limbs, melting details, "
+    "static frame, unnatural motion, camera shake, text, subtitles, watermark"
 )
 
 cache_volume = modal.Volume.from_name("neura-video-model-cache", create_if_missing=True)
@@ -87,6 +110,7 @@ app = modal.App("neura-video-gen", image=image)
 
 _LTX_PIPELINE = None
 _WAN_PIPELINE = None
+_HUNYUAN_PIPELINE = None
 
 
 class GenReq(BaseModel):
@@ -149,6 +173,29 @@ def _validate_wan_request(
         raise ValueError(f"Unsupported workflow for Wan TI2V deployment: {workflow}")
 
 
+def _validate_hunyuan_request(
+    input_image_url: str | None,
+    model_name: str | None,
+    preset_id: str | None,
+    workflow: str | None,
+) -> None:
+    if not input_image_url:
+        raise ValueError("Hunyuan I2V requires inputImageUrl")
+
+    if model_name and model_name != HUNYUAN_QUALITY_MODEL_NAME:
+        raise ValueError(
+            f"Unsupported modelName for Hunyuan I2V deployment: {model_name}"
+        )
+
+    if preset_id and preset_id != HUNYUAN_QUALITY_PRESET_ID:
+        raise ValueError(
+            f"Unsupported presetId for Hunyuan I2V deployment: {preset_id}"
+        )
+
+    if workflow and workflow != "I2V":
+        raise ValueError(f"Unsupported workflow for Hunyuan I2V deployment: {workflow}")
+
+
 def _seed_from_job(job_id: str | None) -> int:
     if not job_id:
         return 42
@@ -181,6 +228,18 @@ def _build_wan_negative_prompt(negative_prompt: str | None) -> str:
     return ", ".join(part for part in parts if part)
 
 
+def _build_hunyuan_prompt(prompt: str) -> str:
+    return f"{prompt.strip()}. {HUNYUAN_QUALITY_PROMPT_SUFFIX}"
+
+
+def _build_hunyuan_negative_prompt(negative_prompt: str | None) -> str:
+    parts = [HUNYUAN_NEGATIVE_PROMPT]
+    if negative_prompt:
+        parts.insert(0, negative_prompt.strip())
+
+    return ", ".join(part for part in parts if part)
+
+
 def _resolve_wan_profile():
     return {
         "max_area": WAN_MAX_AREA,
@@ -191,6 +250,19 @@ def _resolve_wan_profile():
         "message": "Wan 2.2 TI2V standard generated successfully",
         "preset_id": WAN_STANDARD_PRESET_ID,
         "debug_version": "modal_wan22_ti2v_standard_v2_5s",
+    }
+
+
+def _resolve_hunyuan_profile():
+    return {
+        "num_frames": HUNYUAN_NUM_FRAMES,
+        "num_inference_steps": HUNYUAN_NUM_INFERENCE_STEPS,
+        "guidance_scale": HUNYUAN_GUIDANCE_SCALE,
+        "fps": HUNYUAN_VIDEO_FPS,
+        "flow_shift": HUNYUAN_FLOW_SHIFT,
+        "message": "Hunyuan Video I2V quality generated successfully",
+        "preset_id": HUNYUAN_QUALITY_PRESET_ID,
+        "debug_version": "modal_hunyuan_i2v_quality_v2_balanced",
     }
 
 
@@ -237,6 +309,40 @@ def _load_wan_pipeline():
     return _WAN_PIPELINE
 
 
+def _load_hunyuan_pipeline():
+    global _HUNYUAN_PIPELINE
+
+    if _HUNYUAN_PIPELINE is not None:
+        return _HUNYUAN_PIPELINE
+
+    import torch
+    from diffusers import (
+        FlowMatchEulerDiscreteScheduler,
+        HunyuanVideoImageToVideoPipeline,
+    )
+
+    pipe = HunyuanVideoImageToVideoPipeline.from_pretrained(
+        HUNYUAN_MODEL_ID,
+        torch_dtype=torch.bfloat16,
+    )
+
+    if pipe.scheduler is not None:
+        pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
+            pipe.scheduler.config,
+            shift=HUNYUAN_FLOW_SHIFT,
+        )
+
+    if hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_tiling"):
+        pipe.vae.enable_tiling()
+    if hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_slicing"):
+        pipe.vae.enable_slicing()
+
+    pipe.to("cuda")
+
+    _HUNYUAN_PIPELINE = pipe
+    return _HUNYUAN_PIPELINE
+
+
 def _load_input_image(image_url: str):
     import requests
     from PIL import Image, ImageOps
@@ -277,6 +383,29 @@ def _load_wan_input_image(image_url: str, pipe, max_area: int):
 
     resized = image.resize((width, height), Image.Resampling.LANCZOS)
     return resized, height, width
+
+
+def _load_hunyuan_input_image(image_url: str):
+    import requests
+    from PIL import Image, ImageOps
+
+    response = requests.get(image_url, timeout=60)
+    response.raise_for_status()
+
+    image = Image.open(BytesIO(response.content)).convert("RGB")
+    target_size = (
+        (HUNYUAN_LANDSCAPE_WIDTH, HUNYUAN_LANDSCAPE_HEIGHT)
+        if image.width >= image.height
+        else (HUNYUAN_PORTRAIT_WIDTH, HUNYUAN_PORTRAIT_HEIGHT)
+    )
+
+    fitted = ImageOps.fit(
+        image,
+        target_size,
+        method=Image.Resampling.LANCZOS,
+        centering=(0.5, 0.5),
+    )
+    return fitted, target_size[1], target_size[0]
 
 
 @app.function(
@@ -433,6 +562,36 @@ def generate_wan_video_core(
     )
 
 
+@app.function(
+    gpu="A100-80GB",
+    timeout=60 * 60,
+    scaledown_window=10 * 60,
+    volumes={MODEL_CACHE_DIR: cache_volume},
+)
+def generate_hunyuan_video_core(
+    prompt: str,
+    job_id: str | None = None,
+    negative_prompt: str | None = None,
+    input_image_url: str | None = None,
+    provider: str | None = None,
+    model_name: str | None = None,
+    preset_id: str | None = None,
+    user_id: str | None = None,
+    workflow: str | None = None,
+):
+    return _generate_hunyuan_video_response(
+        prompt=prompt,
+        job_id=job_id,
+        negative_prompt=negative_prompt,
+        input_image_url=input_image_url,
+        provider=provider,
+        model_name=model_name,
+        preset_id=preset_id,
+        user_id=user_id,
+        workflow=workflow,
+    )
+
+
 def _generate_wan_video_response(
     prompt: str,
     job_id: str | None = None,
@@ -507,6 +666,77 @@ def _generate_wan_video_response(
     }
 
 
+def _generate_hunyuan_video_response(
+    prompt: str,
+    job_id: str | None = None,
+    negative_prompt: str | None = None,
+    input_image_url: str | None = None,
+    provider: str | None = None,
+    model_name: str | None = None,
+    preset_id: str | None = None,
+    user_id: str | None = None,
+    workflow: str | None = None,
+):
+    import torch
+    from diffusers.utils import export_to_video
+
+    _validate_hunyuan_request(input_image_url, model_name, preset_id, workflow)
+
+    profile = _resolve_hunyuan_profile()
+    pipe = _load_hunyuan_pipeline()
+    image, height, width = _load_hunyuan_input_image(input_image_url)
+    generator = torch.Generator(device="cuda").manual_seed(_seed_from_job(job_id))
+
+    result = pipe(
+        prompt=_build_hunyuan_prompt(prompt),
+        negative_prompt=_build_hunyuan_negative_prompt(negative_prompt),
+        image=image,
+        height=height,
+        width=width,
+        num_frames=profile["num_frames"],
+        num_inference_steps=profile["num_inference_steps"],
+        guidance_scale=profile["guidance_scale"],
+        generator=generator,
+    )
+    frames = result.frames[0]
+
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+        output_path = tmp.name
+
+    try:
+        export_to_video(frames, output_path, fps=profile["fps"])
+        with open(output_path, "rb") as video_file:
+            encoded_video = base64.b64encode(video_file.read()).decode("utf-8")
+    finally:
+        if os.path.exists(output_path):
+            os.remove(output_path)
+
+    return {
+        "status": "ok",
+        "message": profile["message"],
+        "job_id": job_id,
+        "prompt": prompt,
+        "negative_prompt": negative_prompt,
+        "input_image_url": input_image_url,
+        "provider": provider or "modal",
+        "model_name": model_name or HUNYUAN_QUALITY_MODEL_NAME,
+        "preset_id": preset_id or profile["preset_id"],
+        "user_id": user_id,
+        "workflow": workflow or "I2V",
+        "video_base64": encoded_video,
+        "generation_config": {
+            "width": width,
+            "height": height,
+            "num_frames": profile["num_frames"],
+            "num_inference_steps": profile["num_inference_steps"],
+            "guidance_scale": profile["guidance_scale"],
+            "fps": profile["fps"],
+            "flow_shift": profile["flow_shift"],
+        },
+        "debug_version": profile["debug_version"],
+    }
+
+
 @app.function(
     gpu="L40S",
     timeout=60 * 45,
@@ -518,6 +748,29 @@ def generate_video_wan(req: dict):
     data = GenReq.model_validate(req)
 
     return _generate_wan_video_response(
+        prompt=data.prompt,
+        job_id=data.job_id,
+        negative_prompt=data.negative_prompt,
+        input_image_url=data.input_image_url,
+        provider=data.provider,
+        model_name=data.model_name,
+        preset_id=data.preset_id,
+        user_id=data.user_id,
+        workflow=data.workflow,
+    )
+
+
+@app.function(
+    gpu="A100-80GB",
+    timeout=60 * 60,
+    scaledown_window=10 * 60,
+    volumes={MODEL_CACHE_DIR: cache_volume},
+)
+@modal.fastapi_endpoint(method="POST")
+def generate_video_hunyuan(req: dict):
+    data = GenReq.model_validate(req)
+
+    return _generate_hunyuan_video_response(
         prompt=data.prompt,
         job_id=data.job_id,
         negative_prompt=data.negative_prompt,

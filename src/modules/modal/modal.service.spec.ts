@@ -16,6 +16,7 @@ describe('ModalService', () => {
       ...originalEnv,
       MODAL_GENERATE_VIDEO_URL: 'https://modal.example/ltx',
       MODAL_GENERATE_VIDEO_WAN_URL: 'https://modal.example/wan',
+      MODAL_GENERATE_VIDEO_HUNYUAN_URL: 'https://modal.example/hunyuan',
     };
     jest.clearAllMocks();
 
@@ -101,5 +102,30 @@ describe('ModalService', () => {
         modelName: 'hunyuan-video-i2v-quality',
       }),
     ).rejects.toThrow('MODAL_GENERATE_VIDEO_HUNYUAN_URL is missing');
+  });
+
+  it('routes the Hunyuan preset to the dedicated Hunyuan endpoint with the longest timeout', async () => {
+    http.post.mockReturnValue(
+      of({
+        status: 200,
+        headers: {},
+        data: { status: 'ok' },
+      }),
+    );
+
+    await service.generateVideo({
+      prompt: 'prompt',
+      inputImageUrl: 'https://signed.example/input.png',
+      presetId: 'quality_hunyuan_i2v',
+      modelName: 'hunyuan-video-i2v-quality',
+    });
+
+    expect(http.post).toHaveBeenCalledWith(
+      'https://modal.example/hunyuan',
+      expect.any(Object),
+      expect.objectContaining({
+        timeout: 60 * 60 * 1000,
+      }),
+    );
   });
 });
