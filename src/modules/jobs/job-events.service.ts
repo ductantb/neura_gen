@@ -25,6 +25,8 @@ export type JobSnapshotPayload = {
   provider: string | null;
   modelName: string | null;
   presetId: string | null;
+  tier: string | null;
+  estimatedDurationSeconds: number | null;
   workflow: string | null;
   createdAt: string;
   updatedAt: string;

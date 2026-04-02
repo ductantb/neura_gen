@@ -310,6 +310,96 @@ describe('JobsService', () => {
     );
   });
 
+  it('charges the higher quality preset cost only when Hunyuan is selected explicitly', async () => {
+    const inputAsset = {
+      id: 'asset-1',
+      userId: 'user-1',
+      role: 'INPUT',
+      versions: [{ objectKey: 'input.png' }],
+    };
+    const createdJob = {
+      id: 'job-hunyuan',
+      userId: 'user-1',
+      creditCost: 20,
+      provider: 'modal',
+      modelName: 'hunyuan-video-i2v-quality',
+    };
+    const createJob = jest.fn().mockResolvedValue(createdJob);
+
+    prisma.asset.findUnique.mockResolvedValue(inputAsset);
+    prisma.generateJob.update.mockResolvedValue({
+      id: 'job-hunyuan',
+      status: JobStatus.QUEUED,
+      progress: 1,
+      errorMessage: null,
+      startedAt: null,
+      completedAt: null,
+      failedAt: null,
+      updatedAt: now,
+    });
+    prisma.$transaction
+      .mockImplementationOnce(async (callback: any) =>
+        callback({
+          userCredit: {
+            findUnique: jest.fn().mockResolvedValue({ userId: 'user-1', balance: 100 }),
+            update: prisma.userCredit.update,
+          },
+          creditTransaction: {
+            create: prisma.creditTransaction.create,
+          },
+          generateJob: {
+            create: createJob,
+          },
+        }),
+      )
+      .mockImplementationOnce(async (callback: any) =>
+        callback({
+          generateJob: {
+            update: prisma.generateJob.update,
+          },
+          jobLog: {
+            create: prisma.jobLog.create,
+          },
+        }),
+      );
+    videoQueue.add.mockResolvedValue({ id: 'job-hunyuan' });
+
+    const result = await service.createVideoJob('user-1', {
+      inputAssetId: 'asset-1',
+      prompt: 'prompt',
+      presetId: 'quality_hunyuan_i2v',
+    });
+
+    expect(prisma.userCredit.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          balance: {
+            decrement: 20,
+          },
+        },
+      }),
+    );
+    expect(createJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          creditCost: 20,
+          turboEnabled: false,
+          extraConfig: expect.objectContaining({
+            presetId: 'quality_hunyuan_i2v',
+            workflow: 'I2V',
+          }),
+        }),
+      }),
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        presetId: 'quality_hunyuan_i2v',
+        tier: 'quality',
+        estimatedDurationSeconds: 1320,
+      }),
+    );
+  });
+
   it('resolves input assets from extraConfig instead of job asset ownership', async () => {
     prisma.generateJob.findFirst.mockResolvedValue({
       id: 'job-1',

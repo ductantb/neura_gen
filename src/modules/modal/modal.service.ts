@@ -82,6 +82,7 @@ export class ModalService {
         this.http.post(generateUrl, payload, {
           headers: { 'Content-Type': 'application/json' },
           timeout: this.resolveTimeoutMs(payload),
+          proxy: false,
         }),
       );
       console.log('Modal API Response Status:', res.status);
@@ -183,6 +184,7 @@ export class ModalService {
         this.http.get(videoUrl, {
           responseType: 'arraybuffer',
           timeout: 10 * 60 * 1000,
+          proxy: false,
         }),
       );
       return Buffer.from(dl.data);

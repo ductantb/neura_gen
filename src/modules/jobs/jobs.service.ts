@@ -20,6 +20,7 @@ import { JobEventsService, type JobSnapshotPayload } from './job-events.service'
 import { CreateVideoJobDto } from './dto/create-job.dto';
 import {
   resolveVideoPreset,
+  VIDEO_GENERATION_PRESETS,
   type VideoGenerationPresetId,
   type VideoGenerationWorkflow,
 } from './video-generation.catalog';
@@ -39,8 +40,6 @@ type AssetWithLatestVersion = {
 
 @Injectable()
 export class JobsService {
-  private readonly VIDEO_JOB_CREDIT_COST = 10;
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly storageService: StorageService,
@@ -85,7 +84,7 @@ export class JobsService {
         throw new NotFoundException('User credit wallet not found');
       }
 
-      if (wallet.balance < this.VIDEO_JOB_CREDIT_COST) {
+      if (wallet.balance < preset.creditCost) {
         throw new BadRequestException('Not enough credit');
       }
 
@@ -93,7 +92,7 @@ export class JobsService {
         where: { userId },
         data: {
           balance: {
-            decrement: this.VIDEO_JOB_CREDIT_COST,
+            decrement: preset.creditCost,
           },
         },
       });
@@ -101,11 +100,12 @@ export class JobsService {
       await tx.creditTransaction.create({
         data: {
           userId,
-          amount: -this.VIDEO_JOB_CREDIT_COST,
+          amount: -preset.creditCost,
           reason: CreditReason.CREATE_IMAGE_TO_VIDEO_JOB,
           metadata: {
             inputAssetId: dto.inputAssetId,
             prompt: dto.prompt,
+            presetId: preset.id,
           },
         },
       });
@@ -120,7 +120,7 @@ export class JobsService {
           modelName: preset.modelName,
           turboEnabled: preset.turboEnabled,
           progress: 0,
-          creditCost: this.VIDEO_JOB_CREDIT_COST,
+          creditCost: preset.creditCost,
           provider: preset.provider,
           extraConfig: {
             inputAssetId: dto.inputAssetId,
@@ -131,8 +131,12 @@ export class JobsService {
             create: [
               { message: 'Job created' },
               { message: `Input asset: ${inputAsset.id}` },
-              { message: `Credit charged: ${this.VIDEO_JOB_CREDIT_COST}` },
+              { message: `Credit charged: ${preset.creditCost}` },
               { message: `Preset selected: ${preset.id}` },
+              { message: `Tier selected: ${preset.tier}` },
+              {
+                message: `Estimated runtime: ${preset.estimatedDurationSeconds}s`,
+              },
             ],
           },
         },
@@ -264,6 +268,9 @@ export class JobsService {
       provider: createdJob.provider,
       modelName: createdJob.modelName,
       presetId: preset.id,
+      tier: preset.tier,
+      turboEnabled: preset.turboEnabled,
+      estimatedDurationSeconds: preset.estimatedDurationSeconds,
     };
   }
 
@@ -334,6 +341,9 @@ export class JobsService {
           provider: job.provider,
           modelName: job.modelName,
           presetId: this.extractPresetId(job.extraConfig),
+          tier: this.extractPresetMetadata(job.extraConfig)?.tier ?? null,
+          estimatedDurationSeconds:
+            this.extractPresetMetadata(job.extraConfig)?.estimatedDurationSeconds ?? null,
           workflow: this.extractWorkflow(job.extraConfig),
           createdAt: job.createdAt,
           updatedAt: job.updatedAt,
@@ -388,6 +398,9 @@ export class JobsService {
       provider: job.provider,
       modelName: job.modelName,
       presetId: this.extractPresetId(job.extraConfig),
+      tier: this.extractPresetMetadata(job.extraConfig)?.tier ?? null,
+      estimatedDurationSeconds:
+        this.extractPresetMetadata(job.extraConfig)?.estimatedDurationSeconds ?? null,
       workflow: this.extractWorkflow(job.extraConfig),
       creditCost: job.creditCost,
       errorMessage: job.errorMessage,
@@ -498,6 +511,9 @@ export class JobsService {
       provider: job.provider,
       modelName: job.modelName,
       presetId: this.extractPresetId(job.extraConfig),
+      tier: this.extractPresetMetadata(job.extraConfig)?.tier ?? null,
+      estimatedDurationSeconds:
+        this.extractPresetMetadata(job.extraConfig)?.estimatedDurationSeconds ?? null,
       workflow: this.extractWorkflow(job.extraConfig),
       assetId: outputAsset.id,
       bucket: latestVersion.bucket,
@@ -664,6 +680,9 @@ export class JobsService {
       provider: job.provider,
       modelName: job.modelName,
       presetId: this.extractPresetId(job.extraConfig),
+      tier: this.extractPresetMetadata(job.extraConfig)?.tier ?? null,
+      estimatedDurationSeconds:
+        this.extractPresetMetadata(job.extraConfig)?.estimatedDurationSeconds ?? null,
       workflow: this.extractWorkflow(job.extraConfig),
       createdAt: job.createdAt.toISOString(),
       updatedAt: job.updatedAt.toISOString(),
@@ -769,6 +788,11 @@ export class JobsService {
     return typeof maybeWorkflow === 'string'
       ? (maybeWorkflow as VideoGenerationWorkflow)
       : null;
+  }
+
+  private extractPresetMetadata(extraConfig: Prisma.JsonValue | null) {
+    const presetId = this.extractPresetId(extraConfig);
+    return presetId ? VIDEO_GENERATION_PRESETS[presetId] ?? null : null;
   }
 
   private async resolveInputAssets(job: {

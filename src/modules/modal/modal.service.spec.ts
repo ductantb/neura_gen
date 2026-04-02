@@ -62,6 +62,7 @@ describe('ModalService', () => {
       expect.any(Object),
       expect.objectContaining({
         timeout: 10 * 60 * 1000,
+        proxy: false,
       }),
     );
   });
@@ -87,6 +88,7 @@ describe('ModalService', () => {
       expect.any(Object),
       expect.objectContaining({
         timeout: 45 * 60 * 1000,
+        proxy: false,
       }),
     );
   });
@@ -125,6 +127,7 @@ describe('ModalService', () => {
       expect.any(Object),
       expect.objectContaining({
         timeout: 60 * 60 * 1000,
+        proxy: false,
       }),
     );
   });
