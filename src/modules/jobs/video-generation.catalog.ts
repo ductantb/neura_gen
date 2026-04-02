@@ -2,9 +2,10 @@ import { BadRequestException } from '@nestjs/common';
 
 export type VideoGenerationProvider = 'modal';
 export type VideoGenerationWorkflow = 'I2V' | 'TI2V';
-export type VideoGenerationTier = 'preview' | 'standard' | 'quality';
+export type VideoGenerationTier = 'preview' | 'standard' | 'quality' | 'turbo';
 export type VideoGenerationPresetId =
   | 'preview_ltx_i2v'
+  | 'turbo_wan22_i2v_a14b'
   | 'standard_wan22_ti2v'
   | 'quality_hunyuan_i2v';
 
@@ -37,6 +38,18 @@ export const VIDEO_GENERATION_PRESETS: Record<
     turboEnabled: false,
     creditCost: 5,
     estimatedDurationSeconds: 300,
+    requiresExplicitSelection: true,
+  },
+  turbo_wan22_i2v_a14b: {
+    id: 'turbo_wan22_i2v_a14b',
+    label: 'Turbo Wan 2.2 I2V A14B',
+    tier: 'turbo',
+    provider: 'modal',
+    workflow: 'I2V',
+    modelName: 'wan2.2-i2v-a14b-turbo',
+    turboEnabled: true,
+    creditCost: 15,
+    estimatedDurationSeconds: 240,
     requiresExplicitSelection: true,
   },
   standard_wan22_ti2v: {

@@ -400,6 +400,98 @@ describe('JobsService', () => {
     );
   });
 
+  it('keeps Turbo Wan explicit and stores turbo-specific metadata without changing the default preset', async () => {
+    const inputAsset = {
+      id: 'asset-1',
+      userId: 'user-1',
+      role: 'INPUT',
+      versions: [{ objectKey: 'input.png' }],
+    };
+    const createdJob = {
+      id: 'job-turbo',
+      userId: 'user-1',
+      creditCost: 15,
+      provider: 'modal',
+      modelName: 'wan2.2-i2v-a14b-turbo',
+    };
+    const createJob = jest.fn().mockResolvedValue(createdJob);
+
+    prisma.asset.findUnique.mockResolvedValue(inputAsset);
+    prisma.generateJob.update.mockResolvedValue({
+      id: 'job-turbo',
+      status: JobStatus.QUEUED,
+      progress: 1,
+      errorMessage: null,
+      startedAt: null,
+      completedAt: null,
+      failedAt: null,
+      updatedAt: now,
+    });
+    prisma.$transaction
+      .mockImplementationOnce(async (callback: any) =>
+        callback({
+          userCredit: {
+            findUnique: jest.fn().mockResolvedValue({ userId: 'user-1', balance: 100 }),
+            update: prisma.userCredit.update,
+          },
+          creditTransaction: {
+            create: prisma.creditTransaction.create,
+          },
+          generateJob: {
+            create: createJob,
+          },
+        }),
+      )
+      .mockImplementationOnce(async (callback: any) =>
+        callback({
+          generateJob: {
+            update: prisma.generateJob.update,
+          },
+          jobLog: {
+            create: prisma.jobLog.create,
+          },
+        }),
+      );
+    videoQueue.add.mockResolvedValue({ id: 'job-turbo' });
+
+    const result = await service.createVideoJob('user-1', {
+      inputAssetId: 'asset-1',
+      prompt: 'prompt',
+      presetId: 'turbo_wan22_i2v_a14b',
+    });
+
+    expect(prisma.userCredit.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          balance: {
+            decrement: 15,
+          },
+        },
+      }),
+    );
+    expect(createJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          modelName: 'wan2.2-i2v-a14b-turbo',
+          turboEnabled: true,
+          creditCost: 15,
+          extraConfig: expect.objectContaining({
+            presetId: 'turbo_wan22_i2v_a14b',
+            workflow: 'I2V',
+          }),
+        }),
+      }),
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        presetId: 'turbo_wan22_i2v_a14b',
+        tier: 'turbo',
+        turboEnabled: true,
+        estimatedDurationSeconds: 240,
+      }),
+    );
+  });
+
   it('resolves input assets from extraConfig instead of job asset ownership', async () => {
     prisma.generateJob.findFirst.mockResolvedValue({
       id: 'job-1',

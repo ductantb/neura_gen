@@ -4,6 +4,8 @@ import { firstValueFrom } from 'rxjs';
 
 const LTX_PREVIEW_MODEL_NAME = 'ltx-video-i2v-preview';
 const LTX_PREVIEW_PRESET_ID = 'preview_ltx_i2v';
+const TURBO_WAN_MODEL_NAME = 'wan2.2-i2v-a14b-turbo';
+const TURBO_WAN_PRESET_ID = 'turbo_wan22_i2v_a14b';
 const WAN_STANDARD_MODEL_NAME = 'wan2.2-ti2v-standard';
 const WAN_STANDARD_PRESET_ID = 'standard_wan22_ti2v';
 const HUNYUAN_QUALITY_MODEL_NAME = 'hunyuan-video-i2v-quality';
@@ -23,6 +25,13 @@ export class ModalService {
   }
 
   private resolveGenerateUrl(payload: GenerateVideoInput) {
+    if (
+      payload.presetId === TURBO_WAN_PRESET_ID ||
+      payload.modelName === TURBO_WAN_MODEL_NAME
+    ) {
+      return this.getRequiredEnv('MODAL_GENERATE_VIDEO_TURBO_WAN_URL');
+    }
+
     if (
       payload.presetId === WAN_STANDARD_PRESET_ID ||
       payload.modelName === WAN_STANDARD_MODEL_NAME
@@ -57,6 +66,13 @@ export class ModalService {
   }
 
   private resolveTimeoutMs(payload: GenerateVideoInput) {
+    if (
+      payload.presetId === TURBO_WAN_PRESET_ID ||
+      payload.modelName === TURBO_WAN_MODEL_NAME
+    ) {
+      return 20 * 60 * 1000;
+    }
+
     if (
       payload.presetId === WAN_STANDARD_PRESET_ID ||
       payload.modelName === WAN_STANDARD_MODEL_NAME
