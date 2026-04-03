@@ -72,6 +72,7 @@ PORT=3000
 
 # Modal endpoints
 MODAL_GENERATE_VIDEO_URL=https://your-ltx-endpoint.modal.run
+MODAL_GENERATE_VIDEO_TURBO_WAN_URL=https://your-turbo-wan-endpoint.modal.run
 MODAL_GENERATE_VIDEO_WAN_URL=https://your-wan-endpoint.modal.run
 # Chỉ cần nếu dùng preset quality_hunyuan_i2v
 MODAL_GENERATE_VIDEO_HUNYUAN_URL=https://your-hunyuan-endpoint.modal.run
@@ -101,6 +102,7 @@ S3_KEY_PREFIX=neuragen
 - `DATABASE_URL`: chuỗi kết nối PostgreSQL
 - `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`: secret để ký token
 - `MODAL_GENERATE_VIDEO_URL`: endpoint preset `preview_ltx_i2v`
+- `MODAL_GENERATE_VIDEO_TURBO_WAN_URL`: endpoint preset `turbo_wan22_i2v_a14b`
 - `MODAL_GENERATE_VIDEO_WAN_URL`: endpoint preset `standard_wan22_ti2v`
 - `MODAL_GENERATE_VIDEO_HUNYUAN_URL`: endpoint preset `quality_hunyuan_i2v`
 - `REDIS_HOST`, `REDIS_PORT`: Redis cho BullMQ
@@ -110,6 +112,7 @@ S3_KEY_PREFIX=neuragen
 Lưu ý:
 
 - Preset mặc định của hệ thống là `standard_wan22_ti2v`.
+- Preset `turbo_wan22_i2v_a14b` là preset turbo riêng, không được chọn mặc định.
 - Nếu bạn không deploy route Hunyuan thì không nên gọi preset `quality_hunyuan_i2v`.
 
 ## Cách chạy nhanh bằng Docker Compose
@@ -240,7 +243,10 @@ RUN_WORKER=true npm run worker:dev
 
 ## Cách deploy Modal
 
-Repo đã có mã nguồn inference trong [modal_app/video/app.py](modal_app/video/app.py).
+Repo đã có hai entrypoint inference:
+
+- [modal_app/video/app.py](modal_app/video/app.py) cho `preview_ltx_i2v`, `standard_wan22_ti2v` và `quality_hunyuan_i2v`
+- [modal_app/video/turbo_wan_app.py](modal_app/video/turbo_wan_app.py) cho `turbo_wan22_i2v_a14b`
 
 Nếu bạn chưa có endpoint Modal:
 
@@ -248,17 +254,31 @@ Nếu bạn chưa có endpoint Modal:
 pip install modal
 modal token new
 modal deploy modal_app/video/app.py
+modal deploy modal_app/video/turbo_wan_app.py
+```
+
+Hoặc dùng script có sẵn:
+
+```bash
+./scripts/deploy-modal.sh deploy main
+./scripts/deploy-modal.sh deploy turbo
 ```
 
 Sau khi deploy, lấy các URL endpoint Modal và điền vào:
 
 - `MODAL_GENERATE_VIDEO_URL`
+- `MODAL_GENERATE_VIDEO_TURBO_WAN_URL`
 - `MODAL_GENERATE_VIDEO_WAN_URL`
 - `MODAL_GENERATE_VIDEO_HUNYUAN_URL` nếu có route tương ứng
 
 Lưu ý:
 
-- File `modal_app/video/app.py` hiện có route cho LTX preview và Wan 2.2.
+- File `modal_app/video/app.py` hiện có route cho LTX preview, Wan 2.2 standard và Hunyuan quality.
+- File `modal_app/video/turbo_wan_app.py` là route riêng cho TurboDiffusion Wan 2.2 I2V A14B.
+- Turbo app hỗ trợ các env tùy chọn:
+  - `TURBO_WAN_ATTENTION_TYPE=original|sla|sagesla`
+  - `TURBO_WAN_USE_QUANTIZED_CHECKPOINTS=true|false`
+  - `TURBO_WAN_USE_ODE=true|false`
 - Biến `MODAL_GENERATE_VIDEO_HUNYUAN_URL` chỉ cần khi bạn có endpoint Hunyuan riêng.
 
 ## Luồng sử dụng cơ bản
@@ -303,6 +323,7 @@ Body ví dụ:
 Các preset hiện có:
 
 - `preview_ltx_i2v`
+- `turbo_wan22_i2v_a14b`
 - `standard_wan22_ti2v`
 - `quality_hunyuan_i2v`
 
