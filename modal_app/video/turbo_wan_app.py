@@ -11,15 +11,20 @@ from pydantic import BaseModel, Field
 MODEL_CACHE_DIR = "/cache"
 TURBO_REPO_DIR = "/opt/TurboDiffusion"
 TURBO_CHECKPOINT_DIR = f"{MODEL_CACHE_DIR}/turbodiffusion/checkpoints"
+TURBO_GPU_TYPE = "A100-80GB"
+TURBO_STARTUP_TIMEOUT_SECONDS = 60 * 45
+TURBO_EXECUTION_TIMEOUT_SECONDS = 60 * 30
+TURBO_PREFETCH_TIMEOUT_SECONDS = 60 * 45
+TURBO_SCALEDOWN_WINDOW_SECONDS = 20 * 60
 TURBO_OUTPUT_FPS = 16
 TURBO_NUM_FRAMES = 81
 TURBO_NUM_STEPS = 4
 TURBO_RESOLUTION = "720p"
 TURBO_ASPECT_RATIO = "16:9"
 SUPPORTED_ATTENTION_TYPES = {"original", "sla", "sagesla"}
-TURBO_SLA_TOPK = "0.15"
-TURBO_BOUNDARY = "0.9"
-TURBO_SIGMA_MAX = "200"
+TURBO_SLA_TOPK = os.environ.get("TURBO_WAN_SLA_TOPK", "0.15")
+TURBO_BOUNDARY = os.environ.get("TURBO_WAN_BOUNDARY", "0.9")
+TURBO_SIGMA_MAX = os.environ.get("TURBO_WAN_SIGMA_MAX", "200")
 TURBO_MODEL_NAME = "wan2.2-i2v-a14b-turbo"
 TURBO_PRESET_ID = "turbo_wan22_i2v_a14b"
 TURBO_HIGH_REPO = "TurboDiffusion/TurboWan2.2-I2V-A14B-720P"
@@ -41,7 +46,10 @@ def _env_flag(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-TURBO_ATTENTION_TYPE = os.environ.get("TURBO_WAN_ATTENTION_TYPE", "original").strip().lower()
+TURBO_ATTENTION_TYPE = os.environ.get(
+    "TURBO_WAN_ATTENTION_TYPE",
+    "sagesla",
+).strip().lower()
 TURBO_USE_QUANTIZED_CHECKPOINTS = _env_flag(
     "TURBO_WAN_USE_QUANTIZED_CHECKPOINTS",
     False,
@@ -104,6 +112,7 @@ image = (
         "triton>=3.3.0",
         "wheel>=0.38",
         "huggingface_hub",
+        "hf_transfer",
         "requests",
         extra_index_url="https://download.pytorch.org/whl/cu128",
     )
@@ -111,12 +120,14 @@ image = (
         "git clone --depth 1 https://github.com/thu-ml/TurboDiffusion.git /opt/TurboDiffusion",
         "cd /opt/TurboDiffusion && git submodule update --init --recursive",
         "cd /opt/TurboDiffusion && pip install -e . --no-build-isolation",
+        "export CUDA_HOME=/usr/local/cuda TORCH_CUDA_ARCH_LIST=8.0 && pip install git+https://github.com/thu-ml/SpargeAttn.git --no-build-isolation",
     )
     .env(
         {
             "CUDA_HOME": "/usr/local/cuda",
             "HF_HOME": MODEL_CACHE_DIR,
             "HF_HUB_CACHE": f"{MODEL_CACHE_DIR}/hub",
+            "HF_HUB_ENABLE_HF_TRANSFER": "1",
             "TOKENIZERS_PARALLELISM": "false",
         }
     )
@@ -203,6 +214,7 @@ def _ensure_checkpoint_from_candidates(
 
 
 def _ensure_runtime_assets():
+    cache_volume.reload()
     os.makedirs(TURBO_CHECKPOINT_DIR, exist_ok=True)
 
     return {
@@ -216,6 +228,24 @@ def _ensure_runtime_assets():
         ),
         "vae_path": _ensure_checkpoint(WAN_AUX_REPO, WAN_VAE_FILE),
         "text_encoder_path": _ensure_checkpoint(WAN_AUX_REPO, WAN_TEXT_ENCODER_FILE),
+    }
+
+
+@app.function(
+    timeout=TURBO_PREFETCH_TIMEOUT_SECONDS,
+    startup_timeout=TURBO_STARTUP_TIMEOUT_SECONDS,
+    scaledown_window=5 * 60,
+    volumes={MODEL_CACHE_DIR: cache_volume},
+)
+def prefetch_runtime_assets():
+    checkpoint_paths = _ensure_runtime_assets()
+    cache_volume.commit()
+    return {
+        "status": "ok",
+        "message": "Turbo Wan runtime assets are ready in Modal Volume",
+        "checkpoint_variant": TURBO_CHECKPOINT_VARIANT,
+        "attention_type": TURBO_ATTENTION_TYPE,
+        "paths": checkpoint_paths,
     }
 
 
@@ -389,9 +419,10 @@ def _generate_response(
 
 
 @app.function(
-    gpu="A100-80GB",
-    timeout=60 * 30,
-    scaledown_window=10 * 60,
+    gpu=TURBO_GPU_TYPE,
+    timeout=TURBO_EXECUTION_TIMEOUT_SECONDS,
+    startup_timeout=TURBO_STARTUP_TIMEOUT_SECONDS,
+    scaledown_window=TURBO_SCALEDOWN_WINDOW_SECONDS,
     volumes={MODEL_CACHE_DIR: cache_volume},
 )
 def generate_turbo_video_core(
@@ -419,9 +450,10 @@ def generate_turbo_video_core(
 
 
 @app.function(
-    gpu="A100-80GB",
-    timeout=60 * 30,
-    scaledown_window=10 * 60,
+    gpu=TURBO_GPU_TYPE,
+    timeout=TURBO_EXECUTION_TIMEOUT_SECONDS,
+    startup_timeout=TURBO_STARTUP_TIMEOUT_SECONDS,
+    scaledown_window=TURBO_SCALEDOWN_WINDOW_SECONDS,
     volumes={MODEL_CACHE_DIR: cache_volume},
 )
 @modal.fastapi_endpoint(method="POST")

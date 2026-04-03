@@ -264,6 +264,12 @@ Hoặc dùng script có sẵn:
 ./scripts/deploy-modal.sh deploy turbo
 ```
 
+Sau khi deploy turbo app, nên prefetch checkpoint vào Modal Volume trước khi test thật:
+
+```bash
+modal run modal_app/video/turbo_wan_app.py::prefetch_runtime_assets
+```
+
 Sau khi deploy, lấy các URL endpoint Modal và điền vào:
 
 - `MODAL_GENERATE_VIDEO_URL`
@@ -279,6 +285,7 @@ Lưu ý:
   - `TURBO_WAN_ATTENTION_TYPE=original|sla|sagesla`
   - `TURBO_WAN_USE_QUANTIZED_CHECKPOINTS=true|false`
   - `TURBO_WAN_USE_ODE=true|false`
+  - `TURBO_WAN_SLA_TOPK`, `TURBO_WAN_BOUNDARY`, `TURBO_WAN_SIGMA_MAX`
 - Biến `MODAL_GENERATE_VIDEO_HUNYUAN_URL` chỉ cần khi bạn có endpoint Hunyuan riêng.
 
 ## Luồng sử dụng cơ bản
@@ -358,6 +365,12 @@ npm run test           # unit test
 npm run test:e2e       # e2e test
 ```
 
+Smoke test turbo end-to-end qua backend:
+
+```powershell
+pwsh -File scripts/smoke-test-turbo.ps1 -ImagePath path\to\input.png
+```
+
 ## Một số lưu ý khi setup
 
 - `RUN_WORKER` phải là `true` thì worker mới thực sự tiêu thụ queue.
@@ -369,3 +382,4 @@ npm run test:e2e       # e2e test
 ## Tài liệu thêm
 
 - [Jobs SSE Integration Guide](docs/jobs-sse.md)
+- [TurboDiffusion Wan2.2 I2V A14B Report](docs/turbodiffusion-wan22-i2v-a14b-report.md)
