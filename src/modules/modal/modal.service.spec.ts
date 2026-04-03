@@ -15,7 +15,9 @@ describe('ModalService', () => {
     process.env = {
       ...originalEnv,
       MODAL_GENERATE_VIDEO_URL: 'https://modal.example/ltx',
+      MODAL_GENERATE_VIDEO_TURBO_WAN_URL: 'https://modal.example/turbo-wan',
       MODAL_GENERATE_VIDEO_WAN_URL: 'https://modal.example/wan',
+      MODAL_GENERATE_VIDEO_HUNYUAN_URL: 'https://modal.example/hunyuan',
     };
     jest.clearAllMocks();
 
@@ -61,6 +63,7 @@ describe('ModalService', () => {
       expect.any(Object),
       expect.objectContaining({
         timeout: 10 * 60 * 1000,
+        proxy: false,
       }),
     );
   });
@@ -86,6 +89,7 @@ describe('ModalService', () => {
       expect.any(Object),
       expect.objectContaining({
         timeout: 45 * 60 * 1000,
+        proxy: false,
       }),
     );
   });
@@ -101,5 +105,57 @@ describe('ModalService', () => {
         modelName: 'hunyuan-video-i2v-quality',
       }),
     ).rejects.toThrow('MODAL_GENERATE_VIDEO_HUNYUAN_URL is missing');
+  });
+
+  it('routes the Hunyuan preset to the dedicated Hunyuan endpoint with the longest timeout', async () => {
+    http.post.mockReturnValue(
+      of({
+        status: 200,
+        headers: {},
+        data: { status: 'ok' },
+      }),
+    );
+
+    await service.generateVideo({
+      prompt: 'prompt',
+      inputImageUrl: 'https://signed.example/input.png',
+      presetId: 'quality_hunyuan_i2v',
+      modelName: 'hunyuan-video-i2v-quality',
+    });
+
+    expect(http.post).toHaveBeenCalledWith(
+      'https://modal.example/hunyuan',
+      expect.any(Object),
+      expect.objectContaining({
+        timeout: 60 * 60 * 1000,
+        proxy: false,
+      }),
+    );
+  });
+
+  it('routes the Turbo Wan preset to the dedicated turbo endpoint with a medium timeout', async () => {
+    http.post.mockReturnValue(
+      of({
+        status: 200,
+        headers: {},
+        data: { status: 'ok' },
+      }),
+    );
+
+    await service.generateVideo({
+      prompt: 'prompt',
+      inputImageUrl: 'https://signed.example/input.png',
+      presetId: 'turbo_wan22_i2v_a14b',
+      modelName: 'wan2.2-i2v-a14b-turbo',
+    });
+
+    expect(http.post).toHaveBeenCalledWith(
+      'https://modal.example/turbo-wan',
+      expect.any(Object),
+      expect.objectContaining({
+        timeout: 20 * 60 * 1000,
+        proxy: false,
+      }),
+    );
   });
 });
