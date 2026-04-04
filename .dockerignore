@@ -9,3 +9,4 @@ docker-compose.yml
 coverage
 npm-debug.log
 yarn-error.log
+tmp

@@ -1,98 +1,385 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Neura Gen Backend
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+Backend NestJS cho hệ thống tạo video từ ảnh đầu vào, quản lý job xử lý AI và các tính năng social như gallery, post, comment, follow.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## Dự án này làm gì
 
-## Description
+- Xác thực người dùng bằng JWT access token + refresh token
+- Upload asset đầu vào lên S3
+- Tạo job `image-to-video`, đẩy vào hàng đợi BullMQ
+- Worker xử lý job, gọi Modal để generate video
+- Lưu video đầu ra và thumbnail lên S3
+- Theo dõi tiến độ job theo thời gian thực qua SSE
+- Quản lý gallery, bài đăng, bình luận, lượt thích và credit người dùng
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## Công nghệ chính
 
-## Project setup
+- NestJS 11
+- Prisma + PostgreSQL
+- Redis + BullMQ
+- AWS S3
+- Modal cho inference video
+- Swagger tại `/api`
 
-```bash
-$ npm install
+## Kiến trúc chạy
+
+```text
+Client -> NestJS API -> PostgreSQL
+                  -> Redis/BullMQ -> Worker -> Modal -> S3
 ```
 
-## Compile and run the project
+API và worker là 2 tiến trình riêng. API nhận request và tạo job, worker lấy job từ Redis để xử lý nền.
+
+## Yêu cầu cài đặt
+
+Để chạy được đầy đủ end-to-end, bạn cần:
+
+- Node.js `20+`
+- npm `10+`
+- Docker Desktop
+- PostgreSQL 15 và Redis 7 nếu không dùng Docker
+- 1 bucket AWS S3 cùng access key/secret key
+- Endpoint Modal để generate video
+
+Lưu ý:
+
+- Repo hiện tại chưa có MinIO/local storage trong `docker-compose`, nên để chạy hoàn chỉnh bạn cần S3 thật hoặc môi trường S3-compatible đã cấu hình sẵn.
+- Nếu chưa có endpoint Modal thì API vẫn khởi động được, nhưng job generate video sẽ lỗi khi worker gọi provider.
+
+## Cài dependencies
 
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+npm install
 ```
 
-## Run tests
+## Cấu hình `.env`
+
+Tạo file `.env` ở thư mục gốc project.
+
+Mẫu an toàn để điền:
+
+```env
+DATABASE_URL="postgresql://neuragen_user:your_password@localhost:5432/neura_gen?schema=public"
+# Nếu chạy bằng docker compose, đổi host localhost -> db
+
+JWT_ACCESS_SECRET=replace_with_a_long_random_string
+JWT_ACCESS_EXPIRES_IN=15m
+
+JWT_REFRESH_SECRET=replace_with_another_long_random_string
+JWT_REFRESH_EXPIRES_IN=7d
+
+PORT=3000
+
+# Modal endpoints
+MODAL_GENERATE_VIDEO_URL=https://your-ltx-endpoint.modal.run
+MODAL_GENERATE_VIDEO_TURBO_WAN_URL=https://your-turbo-wan-endpoint.modal.run
+MODAL_GENERATE_VIDEO_WAN_URL=https://your-wan-endpoint.modal.run
+# Chỉ cần nếu dùng preset quality_hunyuan_i2v
+MODAL_GENERATE_VIDEO_HUNYUAN_URL=https://your-hunyuan-endpoint.modal.run
+
+# Redis
+REDIS_HOST=localhost
+# Nếu chạy bằng docker compose, đổi host localhost -> redis
+REDIS_PORT=6379
+VIDEO_QUEUE_NAME=video-gen
+
+# App API thường để false; worker sẽ override thành true
+RUN_WORKER=false
+VIDEO_WORKER_CONCURRENCY=1
+
+# AWS S3
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=your_access_key
+AWS_SECRET_ACCESS_KEY=your_secret_key
+AWS_S3_BUCKET=your_bucket_name
+
+STORAGE_DRIVER=s3
+S3_KEY_PREFIX=neuragen
+```
+
+### Ý nghĩa nhanh của các biến quan trọng
+
+- `DATABASE_URL`: chuỗi kết nối PostgreSQL
+- `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`: secret để ký token
+- `MODAL_GENERATE_VIDEO_URL`: endpoint preset `preview_ltx_i2v`
+- `MODAL_GENERATE_VIDEO_TURBO_WAN_URL`: endpoint preset `turbo_wan22_i2v_a14b`
+- `MODAL_GENERATE_VIDEO_WAN_URL`: endpoint preset `standard_wan22_ti2v`
+- `MODAL_GENERATE_VIDEO_HUNYUAN_URL`: endpoint preset `quality_hunyuan_i2v`
+- `REDIS_HOST`, `REDIS_PORT`: Redis cho BullMQ
+- `RUN_WORKER`: bật/tắt worker trong tiến trình hiện tại
+- `AWS_*`, `AWS_S3_BUCKET`: cấu hình lưu file lên S3
+
+Lưu ý:
+
+- Preset mặc định của hệ thống là `standard_wan22_ti2v`.
+- Preset `turbo_wan22_i2v_a14b` là preset turbo riêng, không được chọn mặc định.
+- Nếu bạn không deploy route Hunyuan thì không nên gọi preset `quality_hunyuan_i2v`.
+
+## Cách chạy nhanh bằng Docker Compose
+
+Đây là cách dễ nhất để chạy local vì project đã có sẵn `compose/docker-compose.yml`.
+
+### 1. Chuẩn bị `.env`
+
+- Dùng file `.env` như mẫu ở trên
+- Đổi `DATABASE_URL` sang host `db`
+- Đổi `REDIS_HOST` sang `redis`
+
+Ví dụ:
+
+```env
+DATABASE_URL="postgresql://neuragen_user:your_password@db:5432/neura_gen?schema=public"
+REDIS_HOST=redis
+```
+
+### 2. Khởi động services
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+docker compose -f compose/docker-compose.yml up --build -d
 ```
 
-## Deployment
+Compose sẽ tạo 4 service:
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+- `db`: PostgreSQL
+- `redis`: Redis
+- `api`: NestJS API tại cổng `3000`
+- `worker`: tiến trình xử lý job nền
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+### 3. Chạy migration
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+docker compose -f compose/docker-compose.yml exec api npx prisma migrate deploy
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+### 4. Seed dữ liệu mẫu nếu cần
 
-## Resources
+```bash
+docker compose -f compose/docker-compose.yml exec api npx prisma db seed
+```
 
-Check out a few resources that may come in handy when working with NestJS:
+Sau khi seed, có thể dùng tài khoản mẫu:
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+- Email: `test@gmail.com`
+- Password: `12345678`
 
-## Support
+### 5. Truy cập hệ thống
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+- API: `http://localhost:3000`
+- Swagger: `http://localhost:3000/api`
 
-## Stay in touch
+Xem log:
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+```bash
+docker compose -f compose/docker-compose.yml logs -f api
+docker compose -f compose/docker-compose.yml logs -f worker
+```
 
-## License
+Dừng hệ thống:
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+```bash
+docker compose -f compose/docker-compose.yml down
+```
+
+## Cách chạy local không dùng Docker
+
+Nếu bạn muốn chạy API/worker trực tiếp trên máy:
+
+### 1. Tự chạy PostgreSQL và Redis
+
+- PostgreSQL lắng nghe ở `localhost:5432`
+- Redis lắng nghe ở `localhost:6379`
+
+### 2. Điền `.env`
+
+Giữ:
+
+```env
+DATABASE_URL="postgresql://neuragen_user:your_password@localhost:5432/neura_gen?schema=public"
+REDIS_HOST=localhost
+REDIS_PORT=6379
+RUN_WORKER=false
+```
+
+### 3. Generate Prisma client và migrate database
+
+```bash
+npx prisma generate
+npx prisma migrate deploy
+```
+
+Nếu muốn dữ liệu mẫu:
+
+```bash
+npx prisma db seed
+```
+
+### 4. Mở 2 terminal riêng
+
+Terminal 1 chạy API:
+
+```bash
+npm run start:dev
+```
+
+Terminal 2 chạy worker.
+
+PowerShell:
+
+```powershell
+$env:RUN_WORKER='true'
+npm run worker:dev
+```
+
+Nếu dùng bash:
+
+```bash
+RUN_WORKER=true npm run worker:dev
+```
+
+### 5. Truy cập
+
+- API: `http://localhost:3000`
+- Swagger: `http://localhost:3000/api`
+
+## Cách deploy Modal
+
+Repo đã có hai entrypoint inference:
+
+- [modal_app/video/app.py](modal_app/video/app.py) cho `preview_ltx_i2v`, `standard_wan22_ti2v` và `quality_hunyuan_i2v`
+- [modal_app/video/turbo_wan_app.py](modal_app/video/turbo_wan_app.py) cho `turbo_wan22_i2v_a14b`
+
+Nếu bạn chưa có endpoint Modal:
+
+```bash
+pip install modal
+modal token new
+modal deploy modal_app/video/app.py
+modal deploy modal_app/video/turbo_wan_app.py
+```
+
+Hoặc dùng script có sẵn:
+
+```bash
+./scripts/deploy-modal.sh deploy main
+./scripts/deploy-modal.sh deploy turbo
+```
+
+Sau khi deploy turbo app, nên prefetch checkpoint vào Modal Volume trước khi test thật:
+
+```bash
+modal run modal_app/video/turbo_wan_app.py::prefetch_runtime_assets
+```
+
+Sau khi deploy, lấy các URL endpoint Modal và điền vào:
+
+- `MODAL_GENERATE_VIDEO_URL`
+- `MODAL_GENERATE_VIDEO_TURBO_WAN_URL`
+- `MODAL_GENERATE_VIDEO_WAN_URL`
+- `MODAL_GENERATE_VIDEO_HUNYUAN_URL` nếu có route tương ứng
+
+Lưu ý:
+
+- File `modal_app/video/app.py` hiện có route cho LTX preview, Wan 2.2 standard và Hunyuan quality.
+- File `modal_app/video/turbo_wan_app.py` là route riêng cho TurboDiffusion Wan 2.2 I2V A14B.
+- Turbo app hỗ trợ các env tùy chọn:
+  - `TURBO_WAN_ATTENTION_TYPE=original|sla|sagesla`
+  - `TURBO_WAN_USE_QUANTIZED_CHECKPOINTS=true|false`
+  - `TURBO_WAN_USE_ODE=true|false`
+  - `TURBO_WAN_SLA_TOPK`, `TURBO_WAN_BOUNDARY`, `TURBO_WAN_SIGMA_MAX`
+- Biến `MODAL_GENERATE_VIDEO_HUNYUAN_URL` chỉ cần khi bạn có endpoint Hunyuan riêng.
+
+## Luồng sử dụng cơ bản
+
+### 1. Đăng ký hoặc đăng nhập
+
+- `POST /auth/register`
+- `POST /auth/login`
+
+### 2. Upload ảnh đầu vào
+
+Gọi `POST /assets/upload` với:
+
+- `multipart/form-data`
+- field file tên là `file`
+- gửi kèm bearer token
+
+Có thể truyền thêm:
+
+- `jobId`
+- `type`
+- `role`
+- `folder`
+
+Nếu không truyền `role`, hệ thống mặc định là `INPUT`.
+
+### 3. Tạo job generate video
+
+Gọi `POST /jobs/video`
+
+Body ví dụ:
+
+```json
+{
+  "inputAssetId": "uuid-cua-asset-da-upload",
+  "prompt": "A girl walking in the rain, cinematic motion",
+  "negativePrompt": "blurry, low quality",
+  "presetId": "standard_wan22_ti2v"
+}
+```
+
+Các preset hiện có:
+
+- `preview_ltx_i2v`
+- `turbo_wan22_i2v_a14b`
+- `standard_wan22_ti2v`
+- `quality_hunyuan_i2v`
+
+Mỗi job hiện bị trừ `10` credit. Nếu job fail hoặc bị cancel đúng luồng, hệ thống sẽ hoàn credit.
+
+### 4. Theo dõi tiến độ realtime
+
+Mở SSE:
+
+```http
+GET /jobs/:id/events
+Authorization: Bearer <access_token>
+```
+
+Tài liệu chi tiết nằm ở [docs/jobs-sse.md](docs/jobs-sse.md).
+
+### 5. Lấy kết quả
+
+- `GET /jobs/:id`
+- `GET /jobs/:id/result`
+
+Kết quả trả về sẽ chứa signed URL để tải video và thumbnail từ S3.
+
+## Scripts hay dùng
+
+```bash
+npm run start:dev      # chạy API ở chế độ dev
+npm run worker:dev     # chạy worker dev
+npm run build          # build production
+npm run start:prod     # chạy bản build
+npm run test           # unit test
+npm run test:e2e       # e2e test
+```
+
+Smoke test turbo end-to-end qua backend:
+
+```powershell
+pwsh -File scripts/smoke-test-turbo.ps1 -ImagePath path\to\input.png
+```
+
+## Một số lưu ý khi setup
+
+- `RUN_WORKER` phải là `true` thì worker mới thực sự tiêu thụ queue.
+- Swagger chỉ là tài liệu API, không thay thế worker. Nếu API chạy mà worker không chạy thì job sẽ đứng ở trạng thái `QUEUED`.
+- `DATABASE_URL` và `REDIS_HOST` khác nhau giữa chạy local và chạy bằng Docker Compose.
+- Repo đang đọc `.env` trực tiếp từ thư mục gốc bằng `ConfigModule.forRoot`.
+- S3 credentials không nên commit thật lên git. Nên dùng key riêng cho môi trường dev.
+
+## Tài liệu thêm
+
+- [Jobs SSE Integration Guide](docs/jobs-sse.md)
+- [TurboDiffusion Wan2.2 I2V A14B Report](docs/turbodiffusion-wan22-i2v-a14b-report.md)
