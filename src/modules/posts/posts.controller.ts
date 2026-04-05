@@ -21,6 +21,7 @@ import {
 import { CurrentUser } from 'src/common/decorators/user.decorator';
 import { JwtPayload } from 'src/common/guards/jwt-auth.guard';
 import type { Request } from 'express';
+import { Public } from 'src/common/decorators/public.decorator';
 
 @ApiBearerAuth('access-token')
 @Controller('posts')
@@ -43,6 +44,7 @@ export class PostsController {
   }
 
   @Get()
+  @Public()
   findAll() {
     return this.postsService.findAll();
   }
@@ -55,6 +57,7 @@ export class PostsController {
     description: 'Lấy bài viết thành công',
   })
   @Get(':id')
+  @Public()
   async findOne(
     @Param('id') id: string,
     @Req() req: Request,

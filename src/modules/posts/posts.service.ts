@@ -12,21 +12,26 @@ import Redis from 'ioredis';
 import { createHash } from 'crypto';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { REDIS_CLIENT } from 'src/common/constants';
+import { ExploreService } from '../explore/explore.service';
 
 @Injectable()
 export class PostsService {
   constructor(
     private readonly prismaService: PrismaService,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
+    private readonly exploreService: ExploreService,
   ) {}
 
-  create(userId: string, createPostDto: CreatePostDto) {
-    return this.prismaService.post.create({
+  async create(userId: string, createPostDto: CreatePostDto) {
+    const post = await this.prismaService.post.create({
       data: {
         ...createPostDto,
         userId,
       },
     });
+
+    await this.exploreService.syncPost(post.id);
+    return post;
   }
 
   findAll() {
@@ -68,10 +73,13 @@ export class PostsService {
     if (post.userId !== user.sub && user.role !== UserRole.ADMIN)
       throw new ForbiddenException('Không có quyền cập nhật post này');
 
-    return this.prismaService.post.update({
+    const updatedPost = await this.prismaService.post.update({
       where: { id },
       data: updatePostDto,
     });
+
+    await this.exploreService.syncPost(updatedPost.id);
+    return updatedPost;
   }
 
   async remove(id: string, user: { sub: string; role: UserRole }) {
@@ -111,7 +119,7 @@ export class PostsService {
 
     if (!result) return false;
 
-    const isNewView = result[0][1] === 'OK';
+    const isNewView = result === 'OK';
 
     if (isNewView) {
       await this.redis.hincrby('post:views:buffer', postId, 1);
