@@ -1,9 +1,10 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { ExploreEventType, Prisma } from '@prisma/client';
 import { PrismaService } from 'src/infra/prisma/prisma.service';
 import { ExploreQueryDto } from './dto/explore-query.dto';
 import { RecordExploreEventDto } from './dto/record-explore-event.dto';
+import { BatchRecordExploreEventsDto } from './dto/batch-record-explore-events.dto';
 
 type ExploreMode = 'trending' | 'new' | 'top';
 
@@ -40,6 +41,11 @@ const EXPLORE_ITEM_INCLUDE = {
 type ExploreItemWithRelations = Prisma.ExploreItemGetPayload<{
   include: typeof EXPLORE_ITEM_INCLUDE;
 }>;
+
+type ExploreEventInput = Pick<
+  RecordExploreEventDto,
+  'postId' | 'eventType' | 'metadata'
+>;
 
 @Injectable()
 export class ExploreService {
@@ -279,100 +285,34 @@ export class ExploreService {
   }
 
   async recordEvent(userId: string, dto: RecordExploreEventDto) {
-    const eventType = dto.eventType as ExploreEventType;
-    const weight = EVENT_WEIGHTS[eventType];
-    const now = new Date();
-
-    if (typeof weight !== 'number') {
-      throw new NotFoundException(`Unsupported event type: ${dto.eventType}`);
-    }
-
-    let exploreItem = await this.prismaService.exploreItem.findUnique({
-      where: { postId: dto.postId },
-      select: {
-        postId: true,
-        topic: true,
-      },
+    const batchResult = await this.processExploreEvents(userId, [dto], {
+      dedupeImpression: false,
     });
 
-    if (!exploreItem) {
-      await this.syncPost(dto.postId);
-      exploreItem = await this.prismaService.exploreItem.findUnique({
-        where: { postId: dto.postId },
-        select: {
-          postId: true,
-          topic: true,
-        },
-      });
-    }
+    const recorded = batchResult.recorded[0];
+    return {
+      ok: true,
+      postId: recorded?.postId ?? dto.postId,
+      topic: recorded?.topic ?? null,
+      eventType: recorded?.eventType ?? dto.eventType,
+      weight: recorded?.weight ?? 0,
+    };
+  }
 
-    if (!exploreItem) {
-      throw new NotFoundException(
-        'Post không tồn tại hoặc chưa sẵn sàng trên explore',
-      );
-    }
-
-    await this.prismaService.$transaction(async (tx) => {
-      await tx.exploreInteraction.create({
-        data: {
-          userId,
-          postId: dto.postId,
-          topic: exploreItem.topic,
-          eventType,
-          weight,
-          ...(dto.metadata !== undefined && {
-            metadata: dto.metadata as Prisma.InputJsonValue,
-          }),
-        },
-      });
-
-      await tx.userTopicProfile.upsert({
-        where: {
-          userId_topic: {
-            userId,
-            topic: exploreItem.topic,
-          },
-        },
-        update: {
-          score: {
-            increment: weight,
-          },
-          lastEventAt: now,
-        },
-        create: {
-          userId,
-          topic: exploreItem.topic,
-          score: weight,
-          lastEventAt: now,
-        },
-      });
-
-      if (eventType === ExploreEventType.HIDE) {
-        await tx.hiddenPost.upsert({
-          where: {
-            userId_postId: {
-              userId,
-              postId: dto.postId,
-            },
-          },
-          update: {
-            reason: 'user_hidden_from_explore',
-          },
-          create: {
-            userId,
-            postId: dto.postId,
-            reason: 'user_hidden_from_explore',
-          },
-        });
-      }
+  async recordEventsBatch(userId: string, dto: BatchRecordExploreEventsDto) {
+    const batchResult = await this.processExploreEvents(userId, dto.events, {
+      dedupeImpression: true,
     });
 
     return {
       ok: true,
-      postId: dto.postId,
-      topic: exploreItem.topic,
-      eventType,
-      weight,
+      requested: dto.events.length,
+      accepted: batchResult.acceptedCount,
+      recordedCount: batchResult.recorded.length,
+      skippedCount: batchResult.skippedCount,
+      groupedByType: batchResult.groupedByType,
+      topicUpdates: batchResult.topicUpdates,
+      hiddenPostCount: batchResult.hiddenPostCount,
     };
   }
 
@@ -536,6 +476,234 @@ export class ExploreService {
     }
 
     return map;
+  }
+
+  private async processExploreEvents(
+    userId: string,
+    inputEvents: ExploreEventInput[],
+    options: { dedupeImpression: boolean },
+  ) {
+    const normalizedEvents = this.normalizeExploreEvents(
+      inputEvents,
+      options.dedupeImpression,
+    );
+
+    if (normalizedEvents.length === 0) {
+      return {
+        acceptedCount: 0,
+        skippedCount: 0,
+        hiddenPostCount: 0,
+        groupedByType: {},
+        topicUpdates: [],
+        recorded: [] as Array<{
+          postId: string;
+          topic: string;
+          eventType: ExploreEventType;
+          weight: number;
+        }>,
+      };
+    }
+
+    const uniquePostIds = Array.from(
+      new Set(normalizedEvents.map((event) => event.postId)),
+    );
+    const postTopicMap = await this.resolvePostTopicMap(uniquePostIds);
+
+    const now = new Date();
+    const interactionsData: Prisma.ExploreInteractionCreateManyInput[] = [];
+    const topicWeightMap = new Map<string, number>();
+    const hiddenPostIds = new Set<string>();
+    const groupedByType: Partial<Record<ExploreEventType, number>> = {};
+
+    for (const event of normalizedEvents) {
+      const topic = postTopicMap.get(event.postId);
+      if (!topic) {
+        continue;
+      }
+
+      const eventType = event.eventType as ExploreEventType;
+      const weight = EVENT_WEIGHTS[eventType];
+      if (typeof weight !== 'number') {
+        continue;
+      }
+
+      interactionsData.push({
+        userId,
+        postId: event.postId,
+        topic,
+        eventType,
+        weight,
+        ...(event.metadata !== undefined && {
+          metadata: event.metadata as Prisma.InputJsonValue,
+        }),
+      });
+
+      topicWeightMap.set(topic, (topicWeightMap.get(topic) ?? 0) + weight);
+      groupedByType[eventType] = (groupedByType[eventType] ?? 0) + 1;
+
+      if (eventType === ExploreEventType.HIDE) {
+        hiddenPostIds.add(event.postId);
+      }
+    }
+
+    if (interactionsData.length === 0) {
+      return {
+        acceptedCount: normalizedEvents.length,
+        skippedCount: normalizedEvents.length,
+        hiddenPostCount: 0,
+        groupedByType: {},
+        topicUpdates: [],
+        recorded: [] as Array<{
+          postId: string;
+          topic: string;
+          eventType: ExploreEventType;
+          weight: number;
+        }>,
+      };
+    }
+
+    await this.prismaService.$transaction(async (tx) => {
+      await tx.exploreInteraction.createMany({
+        data: interactionsData,
+      });
+
+      for (const [topic, totalWeight] of topicWeightMap.entries()) {
+        await tx.userTopicProfile.upsert({
+          where: {
+            userId_topic: {
+              userId,
+              topic,
+            },
+          },
+          update: {
+            score: {
+              increment: totalWeight,
+            },
+            lastEventAt: now,
+          },
+          create: {
+            userId,
+            topic,
+            score: totalWeight,
+            lastEventAt: now,
+          },
+        });
+      }
+
+      for (const postId of hiddenPostIds) {
+        await tx.hiddenPost.upsert({
+          where: {
+            userId_postId: {
+              userId,
+              postId,
+            },
+          },
+          update: {
+            reason: 'user_hidden_from_explore',
+          },
+          create: {
+            userId,
+            postId,
+            reason: 'user_hidden_from_explore',
+          },
+        });
+      }
+    });
+
+    const recorded = interactionsData.map((item) => ({
+      postId: item.postId,
+      topic: item.topic ?? 'general',
+      eventType: item.eventType,
+      weight: item.weight,
+    }));
+
+    return {
+      acceptedCount: normalizedEvents.length,
+      skippedCount: normalizedEvents.length - interactionsData.length,
+      hiddenPostCount: hiddenPostIds.size,
+      groupedByType,
+      topicUpdates: Array.from(topicWeightMap.entries()).map(
+        ([topic, totalWeight]) => ({
+          topic,
+          totalWeight: Number(totalWeight.toFixed(4)),
+        }),
+      ),
+      recorded,
+    };
+  }
+
+  private normalizeExploreEvents(
+    events: ExploreEventInput[],
+    dedupeImpression: boolean,
+  ) {
+    const normalized: ExploreEventInput[] = [];
+    const impressionSeen = new Set<string>();
+    const eventSeen = new Set<string>();
+
+    for (const event of events) {
+      const postId = event.postId?.trim();
+      if (!postId) continue;
+
+      const eventType = event.eventType?.toUpperCase();
+      if (!eventType || !(eventType in EVENT_WEIGHTS)) continue;
+
+      const normalizedEvent: ExploreEventInput = {
+        postId,
+        eventType: eventType as ExploreEventInput['eventType'],
+        metadata: event.metadata,
+      };
+
+      if (dedupeImpression && normalizedEvent.eventType === 'IMPRESSION') {
+        if (impressionSeen.has(postId)) continue;
+        impressionSeen.add(postId);
+      } else if (dedupeImpression) {
+        const key = `${postId}:${normalizedEvent.eventType}`;
+        if (eventSeen.has(key)) continue;
+        eventSeen.add(key);
+      }
+
+      normalized.push(normalizedEvent);
+    }
+
+    return normalized;
+  }
+
+  private async resolvePostTopicMap(postIds: string[]) {
+    const topicMap = new Map<string, string>();
+    if (postIds.length === 0) return topicMap;
+
+    let existingItems = await this.prismaService.exploreItem.findMany({
+      where: {
+        postId: { in: postIds },
+      },
+      select: {
+        postId: true,
+        topic: true,
+      },
+    });
+
+    const missingPostIds = postIds.filter(
+      (postId) => !existingItems.some((item) => item.postId === postId),
+    );
+
+    if (missingPostIds.length > 0) {
+      await Promise.all(missingPostIds.map((postId) => this.syncPost(postId)));
+      existingItems = await this.prismaService.exploreItem.findMany({
+        where: {
+          postId: { in: postIds },
+        },
+        select: {
+          postId: true,
+          topic: true,
+        },
+      });
+    }
+
+    for (const item of existingItems) {
+      topicMap.set(item.postId, item.topic);
+    }
+
+    return topicMap;
   }
 
   private calculateScore(post: {

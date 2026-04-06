@@ -6,6 +6,7 @@ import { Public } from 'src/common/decorators/public.decorator';
 import { CurrentUser } from 'src/common/decorators/user.decorator';
 import { JwtPayload } from 'src/common/guards/jwt-auth.guard';
 import { RecordExploreEventDto } from './dto/record-explore-event.dto';
+import { BatchRecordExploreEventsDto } from './dto/batch-record-explore-events.dto';
 
 @Controller('explore')
 export class ExploreController {
@@ -48,5 +49,19 @@ export class ExploreController {
     @Body() dto: RecordExploreEventDto,
   ) {
     return this.exploreService.recordEvent(user.sub, dto);
+  }
+
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Record explore behavior events in batch',
+    description:
+      'Ghi nhận event theo lô (thường dùng cho impression mỗi 2-5 giây) để giảm số request từ frontend',
+  })
+  @Post('events/batch')
+  async recordEventsBatch(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: BatchRecordExploreEventsDto,
+  ) {
+    return this.exploreService.recordEventsBatch(user.sub, dto);
   }
 }
