@@ -27,6 +27,9 @@ model User {
   likes              PostLike[]
   credits            UserCredit?
   assets             Asset[]
+  exploreEvents      ExploreInteraction[]
+  topicProfiles      UserTopicProfile[]
+  hiddenPosts        HiddenPost[]
 
   refreshSessions RefreshSession[]
 }
@@ -213,6 +216,55 @@ model Post {
   assetVersion   AssetVersion @relation(fields: [assetVersionId], references: [id])
   user           User         @relation(fields: [userId], references: [id])
   likes          PostLike[]
+  exploreEvents  ExploreInteraction[]
+  hiddenByUsers  HiddenPost[]
+}
+
+model ExploreInteraction {
+  id        String           @id @default(uuid())
+  userId    String
+  postId    String
+  topic     String?
+  eventType ExploreEventType
+  weight    Float
+  metadata  Json?
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([postId, createdAt])
+  @@index([userId, eventType, createdAt])
+}
+
+model UserTopicProfile {
+  id          String   @id @default(uuid())
+  userId      String
+  topic       String
+  score       Float    @default(0)
+  lastEventAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, topic])
+  @@index([userId, score])
+  @@index([topic])
+}
+
+model HiddenPost {
+  id        String   @id @default(uuid())
+  userId    String
+  postId    String
+  reason    String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, postId])
+  @@index([userId, createdAt])
 }
 
 model PostLike {
@@ -299,4 +351,15 @@ enum CreditReason {
   // refund
   REFUND_FAILED_JOB
   REFUND_CANCELED_JOB
+}
+
+enum ExploreEventType {
+  IMPRESSION
+  OPEN_POST
+  WATCH_3S
+  WATCH_50
+  LIKE
+  COMMENT
+  FOLLOW_CREATOR
+  HIDE
 }
