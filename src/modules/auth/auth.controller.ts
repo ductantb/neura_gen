@@ -6,6 +6,7 @@ import {
   ApiOperation,
   ApiBadRequestResponse,
   ApiUnauthorizedResponse,
+  ApiForbiddenResponse,
 } from '@nestjs/swagger';
 
 import { AuthService } from './auth.service';
@@ -18,6 +19,14 @@ import {
 import { AuthResponseDto } from './dto/auth-response.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { LogoutDto } from './dto/logout.dto';
+import {
+  ForgotPasswordDto,
+  ForgotPasswordResponseDto,
+} from './dto/forgot-password.dto';
+import {
+  ResetPasswordDto,
+  ResetPasswordResponseDto,
+} from './dto/reset-password.dto';
 
 import { Public } from 'src/common/decorators/public.decorator';
 import { CurrentUser } from 'src/common/decorators/user.decorator';
@@ -133,5 +142,36 @@ export class AuthController {
       dto.oldPassword,
       dto.newPassword,
     );
+  }
+
+  @ApiOperation({
+    summary: 'Quên mật khẩu',
+    description: 'Gửi email chứa link reset mật khẩu qua Gmail SMTP.',
+  })
+  @ApiOkResponse({
+    description: 'Yêu cầu reset mật khẩu đã được tiếp nhận',
+    type: ForgotPasswordResponseDto,
+  })
+  @Public()
+  @Post('forgot-password')
+  forgotPassword(@Body() dto: ForgotPasswordDto) {
+    return this.authService.forgotPassword(dto.email);
+  }
+
+  @ApiOperation({
+    summary: 'Đặt lại mật khẩu',
+    description: 'Đặt mật khẩu mới bằng reset token nhận từ email.',
+  })
+  @ApiOkResponse({
+    description: 'Đặt lại mật khẩu thành công',
+    type: ResetPasswordResponseDto,
+  })
+  @ApiForbiddenResponse({
+    description: 'Token không hợp lệ hoặc đã hết hạn',
+  })
+  @Public()
+  @Post('reset-password')
+  resetPassword(@Body() dto: ResetPasswordDto) {
+    return this.authService.resetPassword(dto.token, dto.newPassword);
   }
 }

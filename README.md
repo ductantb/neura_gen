@@ -95,6 +95,16 @@ AWS_S3_BUCKET=your_bucket_name
 
 STORAGE_DRIVER=s3
 S3_KEY_PREFIX=neuragen
+
+# Gmail SMTP (App Password)
+MAIL_HOST=smtp.gmail.com
+MAIL_PORT=587
+MAIL_SECURE=false
+MAIL_USER=your_gmail_address
+MAIL_APP_PASSWORD=your_gmail_app_password
+MAIL_FROM="Neura Gen <your_gmail_address>"
+FRONTEND_URL=http://localhost:5173
+PASSWORD_RESET_TOKEN_TTL_MINUTES=15
 ```
 
 ### Ý nghĩa nhanh của các biến quan trọng
@@ -108,6 +118,9 @@ S3_KEY_PREFIX=neuragen
 - `REDIS_HOST`, `REDIS_PORT`: Redis cho BullMQ
 - `RUN_WORKER`: bật/tắt worker trong tiến trình hiện tại
 - `AWS_*`, `AWS_S3_BUCKET`: cấu hình lưu file lên S3
+- `MAIL_*`: cấu hình Gmail SMTP để gửi email auth
+- `FRONTEND_URL`: URL frontend dùng để tạo reset link
+- `PASSWORD_RESET_TOKEN_TTL_MINUTES`: thời gian hết hạn token reset password
 
 Lưu ý:
 
@@ -294,6 +307,8 @@ Lưu ý:
 
 - `POST /auth/register`
 - `POST /auth/login`
+- `POST /auth/forgot-password`
+- `POST /auth/reset-password`
 
 ### 2. Upload ảnh đầu vào
 

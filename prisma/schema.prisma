@@ -30,6 +30,7 @@ model User {
   exploreEvents      ExploreInteraction[]
   topicProfiles      UserTopicProfile[]
   hiddenPosts        HiddenPost[]
+  passwordResetTokens PasswordResetToken[]
 
   refreshSessions RefreshSession[]
 }
@@ -52,6 +53,20 @@ model RefreshSession {
 
   @@index([userId, createdAt])
   @@index([userId, revokedAt])
+  @@index([expiresAt])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
   @@index([expiresAt])
 }
 

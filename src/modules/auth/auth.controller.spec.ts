@@ -18,6 +18,8 @@ describe('AuthController', () => {
             logout: jest.fn(),
             logoutAll: jest.fn(),
             changePassword: jest.fn(),
+            forgotPassword: jest.fn(),
+            resetPassword: jest.fn(),
           },
         },
       ],
