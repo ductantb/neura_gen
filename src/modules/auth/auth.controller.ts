@@ -1,4 +1,12 @@
-import { Controller, Post, Body, Patch } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  Patch,
+  Get,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiCreatedResponse,
@@ -31,6 +39,9 @@ import {
 import { Public } from 'src/common/decorators/public.decorator';
 import { CurrentUser } from 'src/common/decorators/user.decorator';
 import { JwtPayload } from 'src/common/guards/jwt-auth.guard';
+import type { Request } from 'express';
+import { GoogleProfilePayload } from './strategies/google.strategy';
+import { GoogleOauthGuard } from './guards/google-oauth.guard';
 
 @Controller('auth')
 export class AuthController {
@@ -68,6 +79,28 @@ export class AuthController {
   @Post('login')
   login(@Body() dto: LoginDto) {
     return this.authService.login(dto.email, dto.password);
+  }
+
+  @ApiOperation({
+    summary: 'Đăng nhập nhanh bằng Google OAuth2',
+    description: 'Chuyển hướng người dùng sang Google để xác thực.',
+  })
+  @Public()
+  @Get('google')
+  @UseGuards(GoogleOauthGuard)
+  googleAuth() {
+    return;
+  }
+
+  @ApiOperation({
+    summary: 'Google OAuth2 callback',
+    description: 'Google redirect về endpoint này, hệ thống trả JWT/refresh token.',
+  })
+  @Public()
+  @Get('google/callback')
+  @UseGuards(GoogleOauthGuard)
+  googleAuthCallback(@Req() req: Request) {
+    return this.authService.loginWithGoogle(req.user as GoogleProfilePayload);
   }
 
   @ApiOperation({

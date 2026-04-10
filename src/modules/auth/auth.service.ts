@@ -17,6 +17,7 @@ import { ChangePasswordResponseDto } from './dto/change-password.dto';
 import { User, UserRole } from '@prisma/client';
 import { StringValue } from 'ms';
 import { MailService } from 'src/infra/mail/mail.service';
+import { GoogleProfilePayload } from './strategies/google.strategy';
 
 type RefreshTokenPayload = {
   sub: string;
@@ -88,6 +89,63 @@ export class AuthService {
     }
 
     return this.issueTokenPair(user);
+  }
+
+  async loginWithGoogle(profile: GoogleProfilePayload): Promise<AuthResponseDto> {
+    const normalizedEmail = profile.email.trim().toLowerCase();
+
+    const existingByGoogleId = await this.prisma.user.findUnique({
+      where: { googleId: profile.googleId },
+    });
+
+    if (existingByGoogleId) {
+      return this.issueTokenPair(existingByGoogleId);
+    }
+
+    const existingByEmail = await this.prisma.user.findUnique({
+      where: { email: normalizedEmail },
+    });
+
+    if (existingByEmail) {
+      const linkedUser = await this.prisma.user.update({
+        where: { id: existingByEmail.id },
+        data: {
+          googleId: profile.googleId,
+          ...(profile.avatarUrl && !existingByEmail.avatarUrl
+            ? { avatarUrl: profile.avatarUrl }
+            : {}),
+        },
+      });
+
+      return this.issueTokenPair(linkedUser);
+    }
+
+    const randomPassword = randomBytes(32).toString('hex');
+    const hashed = await hashPassword(randomPassword);
+
+    const newUser = await this.prisma.user.create({
+      data: {
+        email: normalizedEmail,
+        googleId: profile.googleId,
+        password: hashed,
+        username: profile.username,
+        avatarUrl: profile.avatarUrl,
+        credits: {
+          create: {
+            balance: 100,
+          },
+        },
+        creditTransactions: {
+          create: {
+            amount: 100,
+            reason: 'REGISTER_BONUS',
+          },
+        },
+      },
+    });
+
+    await this.mailService.sendWelcomeEmail(newUser.email);
+    return this.issueTokenPair(newUser);
   }
 
   async refreshTokens(refreshToken: string): Promise<AuthResponseDto> {

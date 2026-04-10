@@ -105,6 +105,11 @@ MAIL_APP_PASSWORD=your_gmail_app_password
 MAIL_FROM="Neura Gen <your_gmail_address>"
 FRONTEND_URL=http://localhost:5173
 PASSWORD_RESET_TOKEN_TTL_MINUTES=15
+
+# Google OAuth2 (quick login)
+GOOGLE_CLIENT_ID=your_google_client_id
+GOOGLE_CLIENT_SECRET=your_google_client_secret
+GOOGLE_CALLBACK_URL=http://localhost:3000/auth/google/callback
 ```
 
 ### Ý nghĩa nhanh của các biến quan trọng
@@ -121,6 +126,7 @@ PASSWORD_RESET_TOKEN_TTL_MINUTES=15
 - `MAIL_*`: cấu hình Gmail SMTP để gửi email auth
 - `FRONTEND_URL`: URL frontend dùng để tạo reset link
 - `PASSWORD_RESET_TOKEN_TTL_MINUTES`: thời gian hết hạn token reset password
+- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL`: cấu hình đăng nhập nhanh bằng Google OAuth2
 
 Lưu ý:
 
@@ -309,6 +315,7 @@ Lưu ý:
 - `POST /auth/login`
 - `POST /auth/forgot-password`
 - `POST /auth/reset-password`
+- `GET /auth/google` (OAuth2 Google login)
 
 ### 2. Upload ảnh đầu vào
 
@@ -396,5 +403,6 @@ pwsh -File scripts/smoke-test-turbo.ps1 -ImagePath path\to\input.png
 
 ## Tài liệu thêm
 
+- [Auth Email + Google OAuth2 Integration Guide](docs/auth-email-oauth2.md)
 - [Jobs SSE Integration Guide](docs/jobs-sse.md)
 - [TurboDiffusion Wan2.2 I2V A14B Report](docs/turbodiffusion-wan22-i2v-a14b-report.md)
