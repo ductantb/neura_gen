@@ -16,14 +16,17 @@ model User {
   bio                String?
   avatarUrl          String?
   role               UserRole            @default(FREE)
+  proExpiresAt       DateTime?
   createdAt          DateTime            @default(now())
   canvasSessions     CanvasSession[]
   comments           Comment[]
   creditTransactions CreditTransaction[]
+  dailyUsages        UserDailyUsage[]
   following          Follow[]            @relation("following")
   followers          Follow[]            @relation("followers")
   galleries          GalleryItem[]
   jobs               GenerateJob[]
+  paymentOrders      PaymentOrder[]
   posts              Post[]
   likes              PostLike[]
   credits            UserCredit?
@@ -86,6 +89,44 @@ model CreditTransaction {
   metadata  Json?
   createdAt DateTime     @default(now())
   user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model UserDailyUsage {
+  id                     String   @id @default(uuid())
+  userId                 String
+  dateKey                String
+  premiumFreeCreditsUsed Int      @default(0)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, dateKey])
+  @@index([dateKey])
+}
+
+model PaymentOrder {
+  id             String             @id @default(uuid())
+  userId         String
+  provider       PaymentProvider
+  type           PaymentOrderType
+  status         PaymentOrderStatus @default(PENDING)
+  packageCode    String
+  amountUsd      Decimal            @db.Decimal(10, 2)
+  creditAmount   Int                @default(0)
+  proDurationDays Int               @default(0)
+  providerOrderId String?           @unique
+  metadata       Json?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  paidAt         DateTime?
+  expiresAt      DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@index([type, createdAt])
 }
 
 model GenerateJob {
@@ -360,6 +401,9 @@ enum CreditReason {
   REGISTER_BONUS
   ADMIN_TOPUP
   TEST_REWARD
+  PURCHASE_TOPUP
+  PURCHASE_PRO_SUBSCRIPTION
+  PRO_DAILY_FREE_USAGE
 
   // spend
   CREATE_IMAGE_TO_VIDEO_JOB
@@ -367,6 +411,24 @@ enum CreditReason {
   // refund
   REFUND_FAILED_JOB
   REFUND_CANCELED_JOB
+}
+
+enum PaymentProvider {
+  MOMO
+  BANK_TRANSFER
+}
+
+enum PaymentOrderType {
+  CREDIT_TOPUP
+  PRO_SUBSCRIPTION
+}
+
+enum PaymentOrderStatus {
+  PENDING
+  PAID
+  FAILED
+  CANCELED
+  EXPIRED
 }
 
 enum ExploreEventType {

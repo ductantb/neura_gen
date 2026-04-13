@@ -208,6 +208,13 @@ export class MyProfileResponseDto {
   })
   role: UserRole;
 
+  @ApiPropertyOptional({
+    description: 'Thời điểm hết hạn PRO, null nếu chưa nâng cấp PRO',
+    example: '2026-05-10T10:00:00.000Z',
+    nullable: true,
+  })
+  proExpiresAt?: Date | null;
+
   @ApiProperty({
     description: 'Thời điểm tạo tài khoản',
     example: '2026-03-20T10:00:00.000Z',

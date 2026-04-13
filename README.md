@@ -356,6 +356,12 @@ Các preset hiện có:
 - `standard_wan22_ti2v`
 - `quality_hunyuan_i2v`
 
+Rule quyền truy cập preset:
+
+- `turbo_wan22_i2v_a14b` và `quality_hunyuan_i2v` chỉ dành cho tài khoản `PRO`.
+- `PRO` có `20` premium credits miễn phí mỗi ngày cho preset premium, không cộng dồn qua ngày tiếp theo.
+- Khi tạo job premium, hệ thống ưu tiên trừ phần free theo ngày trước, sau đó mới trừ ví credit.
+
 Mỗi job hiện bị trừ `10` credit. Nếu job fail hoặc bị cancel đúng luồng, hệ thống sẽ hoàn credit.
 
 ### 4. Theo dõi tiến độ realtime
@@ -375,6 +381,18 @@ Tài liệu chi tiết nằm ở [docs/jobs-sse.md](docs/jobs-sse.md).
 - `GET /jobs/:id/result`
 
 Kết quả trả về sẽ chứa signed URL để tải video và thumbnail từ S3.
+
+### 6. Billing (MVP)
+
+- `GET /billing/catalog`: lấy bảng giá top-up + gói PRO hiện tại.
+- `POST /billing/orders`: tạo đơn thanh toán `MOMO` hoặc `BANK_TRANSFER`.
+- `GET /billing/orders/me`: xem lịch sử đơn của user hiện tại.
+- `POST /billing/orders/:id/mark-paid`: API nội bộ để test đánh dấu thanh toán thành công (chỉ `ADMIN`).
+
+Lưu ý:
+
+- Luồng webhook MoMo/bank vẫn là bước tích hợp kế tiếp.
+- Hiện tại có thể dùng `mark-paid` để test luồng cộng credit và nâng `PRO` end-to-end.
 
 ## Scripts hay dùng
 

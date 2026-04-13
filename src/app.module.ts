@@ -17,6 +17,7 @@ import { ExploreModule } from './modules/explore/explore.module';
 import { WorkersModule } from './workers/workers.module';
 import { QueueModule } from './infra/queue/queue.module';
 import { StorageModule } from './infra/storage/storage.module';
+import { BillingModule } from './modules/billing/billing.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { StorageModule } from './infra/storage/storage.module';
     QueueModule,
     WorkersModule,
     StorageModule,
+    BillingModule,
   ],
   providers: [
     {

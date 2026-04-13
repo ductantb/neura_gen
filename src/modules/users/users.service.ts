@@ -19,6 +19,7 @@ export class UsersService {
         avatarUrl: true,
         bio: true,
         role: true,
+        proExpiresAt: true,
         createdAt: true,
         credits: {
           select: {
@@ -79,6 +80,7 @@ export class UsersService {
       avatarUrl: user.avatarUrl,
       bio: user.bio,
       role: user.role,
+      proExpiresAt: user.proExpiresAt,
       createdAt: user.createdAt,
       credits: user.credits,
       counts: {

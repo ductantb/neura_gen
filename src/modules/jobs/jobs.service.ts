@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -11,6 +12,7 @@ import {
   JobStatus,
   JobType,
   Prisma,
+  UserRole,
 } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { VIDEO_QUEUE } from 'src/common/constants';
@@ -19,6 +21,8 @@ import { PrismaService } from '../../infra/prisma/prisma.service';
 import { JobEventsService, type JobSnapshotPayload } from './job-events.service';
 import { CreateVideoJobDto } from './dto/create-job.dto';
 import {
+  isProOnlyPreset,
+  PRO_DAILY_FREE_PREMIUM_CREDITS,
   resolveVideoPreset,
   VIDEO_GENERATION_PRESETS,
   type VideoGenerationPresetId,
@@ -76,39 +80,132 @@ export class JobsService {
     }
 
     const createdJob = await this.prisma.$transaction(async (tx) => {
-      const wallet = await tx.userCredit.findUnique({
-        where: { userId },
-      });
-
-      if (!wallet) {
-        throw new NotFoundException('User credit wallet not found');
-      }
-
-      if (wallet.balance < preset.creditCost) {
-        throw new BadRequestException('Not enough credit');
-      }
-
-      await tx.userCredit.update({
-        where: { userId },
-        data: {
-          balance: {
-            decrement: preset.creditCost,
-          },
+      const user = await tx.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          role: true,
+          proExpiresAt: true,
         },
       });
 
-      await tx.creditTransaction.create({
-        data: {
-          userId,
-          amount: -preset.creditCost,
-          reason: CreditReason.CREATE_IMAGE_TO_VIDEO_JOB,
-          metadata: {
-            inputAssetId: dto.inputAssetId,
-            prompt: dto.prompt,
-            presetId: preset.id,
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+
+      const effectiveRole = this.resolveEffectiveRole(user.role, user.proExpiresAt);
+
+      if (user.role !== effectiveRole) {
+        await tx.user.update({
+          where: { id: userId },
+          data: {
+            role: effectiveRole,
+            ...(effectiveRole === UserRole.FREE ? { proExpiresAt: null } : {}),
           },
-        },
-      });
+        });
+      }
+
+      if (isProOnlyPreset(preset.id) && effectiveRole !== UserRole.PRO && effectiveRole !== UserRole.ADMIN) {
+        throw new ForbiddenException(
+          'This preset is available for PRO users only.',
+        );
+      }
+
+      let dailyFreeApplied = 0;
+      if (effectiveRole === UserRole.PRO && isProOnlyPreset(preset.id)) {
+        const dateKey = this.getBusinessDateKey();
+        const dailyUsage = await tx.userDailyUsage.upsert({
+          where: {
+            userId_dateKey: {
+              userId,
+              dateKey,
+            },
+          },
+          update: {},
+          create: {
+            userId,
+            dateKey,
+          },
+        });
+
+        const freeRemaining = Math.max(
+          0,
+          PRO_DAILY_FREE_PREMIUM_CREDITS - dailyUsage.premiumFreeCreditsUsed,
+        );
+        dailyFreeApplied = Math.min(preset.creditCost, freeRemaining);
+
+        if (dailyFreeApplied > 0) {
+          await tx.userDailyUsage.update({
+            where: {
+              userId_dateKey: {
+                userId,
+                dateKey,
+              },
+            },
+            data: {
+              premiumFreeCreditsUsed: {
+                increment: dailyFreeApplied,
+              },
+            },
+          });
+
+          await tx.creditTransaction.create({
+            data: {
+              userId,
+              amount: 0,
+              reason: CreditReason.PRO_DAILY_FREE_USAGE,
+              metadata: {
+                inputAssetId: dto.inputAssetId,
+                prompt: dto.prompt,
+                presetId: preset.id,
+                dateKey,
+                freeCreditApplied: dailyFreeApplied,
+              },
+            },
+          });
+        }
+      }
+
+      const chargedCreditCost = preset.creditCost - dailyFreeApplied;
+
+      if (chargedCreditCost > 0) {
+        const wallet = await tx.userCredit.findUnique({
+          where: { userId },
+        });
+
+        if (!wallet) {
+          throw new NotFoundException('User credit wallet not found');
+        }
+
+        if (wallet.balance < chargedCreditCost) {
+          throw new BadRequestException('Not enough credit');
+        }
+
+        await tx.userCredit.update({
+          where: { userId },
+          data: {
+            balance: {
+              decrement: chargedCreditCost,
+            },
+          },
+        });
+
+        await tx.creditTransaction.create({
+          data: {
+            userId,
+            amount: -chargedCreditCost,
+            reason: CreditReason.CREATE_IMAGE_TO_VIDEO_JOB,
+            metadata: {
+              inputAssetId: dto.inputAssetId,
+              prompt: dto.prompt,
+              presetId: preset.id,
+              baseCreditCost: preset.creditCost,
+              chargedCreditCost,
+              freeCreditApplied: dailyFreeApplied,
+            },
+          },
+        });
+      }
 
       return tx.generateJob.create({
         data: {
@@ -120,18 +217,23 @@ export class JobsService {
           modelName: preset.modelName,
           turboEnabled: preset.turboEnabled,
           progress: 0,
-          creditCost: preset.creditCost,
+          creditCost: chargedCreditCost,
           provider: preset.provider,
           extraConfig: {
             inputAssetId: dto.inputAssetId,
             presetId: preset.id,
             workflow: preset.workflow,
+            baseCreditCost: preset.creditCost,
+            chargedCreditCost,
+            freeCreditApplied: dailyFreeApplied,
           },
           logs: {
             create: [
               { message: 'Job created' },
               { message: `Input asset: ${inputAsset.id}` },
-              { message: `Credit charged: ${preset.creditCost}` },
+              { message: `Base credit cost: ${preset.creditCost}` },
+              { message: `Free credit applied: ${dailyFreeApplied}` },
+              { message: `Credit charged: ${chargedCreditCost}` },
               { message: `Preset selected: ${preset.id}` },
               { message: `Tier selected: ${preset.tier}` },
               {
@@ -819,6 +921,31 @@ export class JobsService {
     }
 
     return job.assets.filter((asset) => asset.role === AssetRole.INPUT);
+  }
+
+  private getBusinessDateKey(date = new Date()): string {
+    // Daily quota is reset based on Vietnam timezone.
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date);
+  }
+
+  private resolveEffectiveRole(
+    role: UserRole,
+    proExpiresAt: Date | null,
+  ): UserRole {
+    if (role !== UserRole.PRO) {
+      return role;
+    }
+
+    if (!proExpiresAt) {
+      return UserRole.FREE;
+    }
+
+    return proExpiresAt.getTime() > Date.now() ? UserRole.PRO : UserRole.FREE;
   }
 
   private async refundCreditIfMissing(

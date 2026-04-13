@@ -228,3 +228,4 @@ curl "http://localhost:3000/explore?mode=top&topic=anime&limit=20"
 3. Theo dõi phân bố score theo ngày để tune ngưỡng trending.
 4. Quan sát tỷ lệ bài mới xuất hiện ở `mode=trending` và `mode=new`.
 
+// thêm phần xem lịch sử những post nào đã thích, tìm kiếm theo tag
