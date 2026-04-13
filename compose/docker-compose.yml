@@ -31,6 +31,21 @@ services:
       timeout: 3s
       retries: 20
 
+  db_init:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+    container_name: neura_gen_db_init
+    env_file:
+      - ../.env
+    volumes:
+      - ..:/app
+      - /app/node_modules
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["sh", "-c", "npx prisma db push && npx prisma generate"]
+
   api:
     build:
       context: ..
@@ -46,10 +61,10 @@ services:
       - ..:/app
       - /app/node_modules
     depends_on:
-      db:
-        condition: service_healthy
       redis:
         condition: service_healthy
+      db_init:
+        condition: service_completed_successfully
 
   worker:
     build:
@@ -64,10 +79,10 @@ services:
       - ..:/app
       - /app/node_modules
     depends_on:
-      db:
-        condition: service_healthy
       redis:
         condition: service_healthy
+      db_init:
+        condition: service_completed_successfully
     command: ["npm", "run", "worker:dev"]
 
 volumes:
