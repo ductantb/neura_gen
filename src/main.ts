@@ -3,7 +3,7 @@ import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ValidationPipe } from '@nestjs/common';
 import { CamelCaseInterceptor } from './common/interceptors/camel-case.interceptor';
-import { SnakeCaseInterceptor } from './common/interceptors/snake-case.interceptor';
+import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -21,7 +21,7 @@ async function bootstrap() {
   });
   app.useGlobalInterceptors(
     new CamelCaseInterceptor(),
-    new SnakeCaseInterceptor(),
+    new ResponseInterceptor()
   );
 
   const config = new DocumentBuilder()
