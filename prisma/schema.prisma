@@ -16,7 +16,6 @@ model User {
   avatarUrl          String?
   role               UserRole            @default(FREE)
   createdAt          DateTime            @default(now())
-  canvasSessions     CanvasSession[]
   comments           Comment[]
   creditTransactions CreditTransaction[]
   following          Follow[]            @relation("following")
@@ -173,21 +172,6 @@ model GalleryItem {
   createdAt      DateTime     @default(now())
   assetVersion   AssetVersion @relation(fields: [assetVersionId], references: [id])
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-model SmartIcon {
-  id         String @id @default(uuid())
-  name       String
-  category   String
-  attributes Json
-}
-
-model CanvasSession {
-  id        String   @id @default(uuid())
-  userId    String
-  layout    Json
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model JobLog {

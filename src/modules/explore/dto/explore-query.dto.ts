@@ -1,5 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBooleanString, IsIn, IsOptional, IsString } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsBooleanString, IsIn, IsNumber, IsOptional, IsString } from 'class-validator';
 
 export class ExploreQueryDto {
   @ApiPropertyOptional({ example: 'anime' })
@@ -19,6 +20,8 @@ export class ExploreQueryDto {
 
   @ApiPropertyOptional({ example: 20 })
   @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
   limit?: number;
 
   @ApiPropertyOptional({ description: 'cursor = ExploreItem.id' })
