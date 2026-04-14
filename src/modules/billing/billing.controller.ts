@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Post } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { Roles } from 'src/common/decorators/roles.decorator';
+import { Public } from 'src/common/decorators/public.decorator';
 import { CurrentUser } from 'src/common/decorators/user.decorator';
 import { JwtPayload } from 'src/common/guards/jwt-auth.guard';
 import { BillingService } from './billing.service';
@@ -44,5 +45,16 @@ export class BillingController {
   @Post('orders/:id/mark-paid')
   markOrderPaid(@Param('id') id: string, @Body() dto: MarkPaymentPaidDto) {
     return this.billingService.markOrderPaid(id, dto);
+  }
+
+  @ApiOperation({
+    summary: 'MoMo IPN webhook callback',
+    description: 'Endpoint public để MoMo callback kết quả thanh toán.',
+  })
+  @Public()
+  @HttpCode(204)
+  @Post('webhooks/momo')
+  async momoWebhook(@Body() payload: Record<string, unknown>) {
+    await this.billingService.handleMomoIpn(payload);
   }
 }

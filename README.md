@@ -110,6 +110,19 @@ PASSWORD_RESET_TOKEN_TTL_MINUTES=15
 GOOGLE_CLIENT_ID=your_google_client_id
 GOOGLE_CLIENT_SECRET=your_google_client_secret
 GOOGLE_CALLBACK_URL=http://localhost:3000/auth/google/callback
+
+# MoMo Payment Gateway
+MOMO_ENDPOINT=https://test-payment.momo.vn
+MOMO_PARTNER_CODE=your_momo_partner_code
+MOMO_ACCESS_KEY=your_momo_access_key
+MOMO_SECRET_KEY=your_momo_secret_key
+MOMO_REDIRECT_URL=http://localhost:5173/billing/momo-return
+MOMO_IPN_URL=https://your-public-api.example.com/billing/webhooks/momo
+MOMO_REQUEST_TYPE=payWithMethod
+MOMO_PARTNER_NAME=Neura Gen
+MOMO_STORE_ID=NeuraGen
+MOMO_LANG=vi
+MOMO_AUTO_CAPTURE=true
 ```
 
 ### Ý nghĩa nhanh của các biến quan trọng
@@ -127,6 +140,7 @@ GOOGLE_CALLBACK_URL=http://localhost:3000/auth/google/callback
 - `FRONTEND_URL`: URL frontend dùng để tạo reset link
 - `PASSWORD_RESET_TOKEN_TTL_MINUTES`: thời gian hết hạn token reset password
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL`: cấu hình đăng nhập nhanh bằng Google OAuth2
+- `MOMO_*`: cấu hình tạo link thanh toán và nhận IPN webhook từ MoMo
 
 Lưu ý:
 
@@ -423,4 +437,5 @@ pwsh -File scripts/smoke-test-turbo.ps1 -ImagePath path\to\input.png
 
 - [Auth Email + Google OAuth2 Integration Guide](docs/auth-email-oauth2.md)
 - [Jobs SSE Integration Guide](docs/jobs-sse.md)
+- [Billing + MoMo Integration Guide](docs/billing-momo-integration.md)
 - [TurboDiffusion Wan2.2 I2V A14B Report](docs/turbodiffusion-wan22-i2v-a14b-report.md)
