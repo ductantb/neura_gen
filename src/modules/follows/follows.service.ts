@@ -1,5 +1,4 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { CreateFollowDto } from './dto/create-follow.dto';
 import { PrismaService } from 'src/infra/prisma/prisma.service';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
 import { UserRole } from '@prisma/client';
@@ -8,13 +7,43 @@ import { UserRole } from '@prisma/client';
 export class FollowsService {
   constructor(private readonly prismaService: PrismaService) {}
 
-  create(userId: string, createFollowDto: CreateFollowDto) {
-    return this.prismaService.follow.create({
-      data: {
-        ...createFollowDto,
-        followerId: userId,
+  async create(userId: string, followingId: string) {
+    if (userId === followingId)
+      throw new ForbiddenException('Không thể follow chính mình');
+
+    const existing = await this.prismaService.follow.findUnique({
+      where: {
+        followerId_followingId: {
+          followerId: userId,
+          followingId,
+        },
       },
     });
+
+    if (existing) return { id: existing.id };
+
+    return this.prismaService.follow.create({
+      data: {
+        followerId: userId,
+        followingId,
+      },
+      select: {
+        id: true,
+      },
+    });
+  }
+
+  async isFollowed(followingId: string, userId?: string) {
+    if (!userId) return false;
+
+    const count = await this.prismaService.follow.count({
+      where: {
+        followerId: userId,
+        followingId,
+      },
+    });
+
+    return count > 0;
   }
 
   async findFollowers(userId: string, { cursor, take }: PaginationDto) {
@@ -75,7 +104,10 @@ export class FollowsService {
     };
   }
 
-  async remove(user: { followerId: string, role: UserRole }, followingId: string) {
+  async remove(
+    user: { followerId: string; role: UserRole },
+    followingId: string,
+  ) {
     const follow = await this.prismaService.follow.findUnique({
       where: {
         followerId_followingId: {
@@ -96,6 +128,9 @@ export class FollowsService {
           followerId: user.followerId,
           followingId,
         },
+      },
+      select: {
+        id: true,
       },
     });
   }

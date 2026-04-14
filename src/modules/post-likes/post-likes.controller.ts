@@ -9,7 +9,6 @@ import {
   Req,
 } from '@nestjs/common';
 import { PostLikesService } from './post-likes.service';
-import { CreatePostLikeDto } from './dto/create-post-like.dto';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
 import { CurrentUser } from 'src/common/decorators/user.decorator';
 import { JwtPayload } from 'src/common/guards/jwt-auth.guard';
@@ -36,9 +35,9 @@ export class PostLikesController {
   @Post()
   create(
     @CurrentUser() user: JwtPayload,
-    @Body() createPostLikeDto: CreatePostLikeDto,
+    @Param('postId') postId: string
   ) {
-    return this.postLikesService.create(user.sub, createPostLikeDto);
+    return this.postLikesService.create(user.sub, postId);
   }
 
   @ApiOperation({

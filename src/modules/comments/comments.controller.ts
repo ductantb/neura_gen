@@ -28,9 +28,10 @@ export class CommentsController {
   @Post()
   create(
     @CurrentUser() user: JwtPayload,
+    @Param('postId') postId: string,
     @Body() createCommentDto: CreateCommentDto,
   ) {
-    return this.commentsService.create(user.sub, createCommentDto);
+    return this.commentsService.create(user.sub, postId, createCommentDto);
   }
 
   @ApiOperation({

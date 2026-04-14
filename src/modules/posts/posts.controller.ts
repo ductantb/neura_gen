@@ -21,11 +21,17 @@ import {
 import { CurrentUser } from 'src/common/decorators/user.decorator';
 import { JwtPayload } from 'src/common/guards/jwt-auth.guard';
 import type { Request } from 'express';
+import { PostLikesService } from '../post-likes/post-likes.service';
+import { FollowsService } from '../follows/follows.service';
 
 @ApiBearerAuth('access-token')
 @Controller('posts')
 export class PostsController {
-  constructor(private readonly postsService: PostsService) {}
+  constructor(
+    private readonly postsService: PostsService,
+    private readonly postLikesService: PostLikesService,
+    private readonly followsService: FollowsService,
+  ) {}
 
   @ApiOperation({
     summary: 'Tạo bài viết mới',
@@ -68,14 +74,29 @@ export class PostsController {
         : req.ip || req.socket.remoteAddress;
 
     const userAgent = req.headers['user-agent'] || '';
+    const post = await this.postsService.findOne(id);
 
+    if (!post) throw new Error('Không tìm thấy bài viết');
+
+    const [like, follow] = await Promise.all([
+      this.postLikesService.isLiked(id, user?.sub),
+      this.followsService.isFollowed(post.user.id, user?.sub),
+    ]);
     if (!rawIp) {
-      return this.postsService.findOne(id);
+      return {
+        ...post,
+        isLiked: like,
+        isFollowed: follow,
+      }
     }
 
     await this.postsService.trackView(id, rawIp, userAgent, user?.sub);
 
-    return this.postsService.findOne(id);
+    return {
+      ...post,
+      isLiked: like,
+      isFollowed: follow,
+    };
   }
 
   @ApiOperation({
