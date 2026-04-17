@@ -5,6 +5,7 @@ import {
   UserRole,
   CreditReason,
 } from '@prisma/client';
+import axios from 'axios';
 import { createHmac } from 'crypto';
 import { BillingService } from './billing.service';
 
@@ -165,6 +166,82 @@ describe('BillingService', () => {
     jest.useRealTimers();
   });
 
+  it('creates payOS payment link and returns checkoutUrl', async () => {
+    const configMap: Record<string, string> = {
+      PAYOS_ENDPOINT: 'https://api-merchant.payos.vn',
+      PAYOS_CLIENT_ID: 'client-id',
+      PAYOS_API_KEY: 'api-key',
+      PAYOS_CHECKSUM_KEY: 'checksum-key',
+      PAYOS_RETURN_URL: 'http://localhost:5173/billing/payos-return',
+      PAYOS_CANCEL_URL: 'http://localhost:5173/billing/payos-return',
+    };
+    configService.get.mockImplementation((key: string) => configMap[key]);
+    prisma.paymentOrder.findFirst.mockResolvedValue(null);
+    prisma.paymentOrder.create.mockResolvedValue({
+      id: 'order-1',
+      userId: 'user-1',
+      provider: PaymentProvider.PAYOS,
+      type: PaymentOrderType.CREDIT_TOPUP,
+      status: PaymentOrderStatus.PENDING,
+      packageCode: 'TOPUP_POPULAR_9_99',
+      amountUsd: '9.99',
+      creditAmount: 700,
+      proDurationDays: 0,
+      createdAt: new Date('2026-04-18T10:00:00.000Z'),
+      expiresAt: new Date('2026-04-18T10:30:00.000Z'),
+      metadata: { amountVnd: 250000 },
+    });
+    prisma.paymentOrder.update.mockResolvedValue({
+      id: 'order-1',
+      provider: PaymentProvider.PAYOS,
+      type: PaymentOrderType.CREDIT_TOPUP,
+      status: PaymentOrderStatus.PENDING,
+      packageCode: 'TOPUP_POPULAR_9_99',
+      amountUsd: '9.99',
+      creditAmount: 700,
+      proDurationDays: 0,
+      createdAt: new Date('2026-04-18T10:00:00.000Z'),
+      expiresAt: new Date('2026-04-18T10:30:00.000Z'),
+    });
+
+    const postSpy = jest.spyOn(axios, 'post').mockResolvedValue({
+      data: {
+        code: '00',
+        desc: 'success',
+        data: {
+          bin: '970418',
+          accountNumber: '123456789',
+          accountName: 'NEURA GEN',
+          amount: 250000,
+          description: 'NEURA1234567890123',
+          orderCode: 123456789012345,
+          currency: 'VND',
+          paymentLinkId: 'plink_1',
+          status: 'PENDING',
+          checkoutUrl: 'https://pay.payos.vn/web/abc',
+          qrCode: '000201010212...',
+        },
+      },
+    } as any);
+
+    const result = await service.createOrder('user-1', {
+      provider: PaymentProvider.PAYOS,
+      type: PaymentOrderType.CREDIT_TOPUP,
+      packageCode: 'TOPUP_POPULAR_9_99',
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        id: 'order-1',
+        provider: PaymentProvider.PAYOS,
+        payUrl: 'https://pay.payos.vn/web/abc',
+        paymentLinkId: 'plink_1',
+      }),
+    );
+    expect(postSpy).toHaveBeenCalled();
+    postSpy.mockRestore();
+  });
+
   it('accepts valid MoMo IPN and marks order as paid', async () => {
     const configMap: Record<string, string> = {
       MOMO_ENDPOINT: 'https://test-payment.momo.vn',
@@ -236,5 +313,113 @@ describe('BillingService', () => {
     });
 
     markOrderPaidSpy.mockRestore();
+  });
+
+  it('accepts valid payOS webhook and marks order as paid', async () => {
+    const configMap: Record<string, string> = {
+      PAYOS_ENDPOINT: 'https://api-merchant.payos.vn',
+      PAYOS_CLIENT_ID: 'client-id',
+      PAYOS_API_KEY: 'api-key',
+      PAYOS_CHECKSUM_KEY: 'checksum-key',
+      PAYOS_RETURN_URL: 'http://localhost:5173/billing/payos-return',
+      PAYOS_CANCEL_URL: 'http://localhost:5173/billing/payos-return',
+    };
+    configService.get.mockImplementation((key: string) => configMap[key]);
+    prisma.paymentOrder.findFirst.mockResolvedValue({
+      id: 'order-1',
+      status: PaymentOrderStatus.PENDING,
+      provider: PaymentProvider.PAYOS,
+      metadata: {
+        amountVnd: 250000,
+        payosOrderCode: 123456789012345,
+      },
+    });
+    prisma.paymentOrder.update.mockResolvedValue({});
+
+    const markOrderPaidSpy = jest
+      .spyOn(service, 'markOrderPaid')
+      .mockResolvedValue({ status: PaymentOrderStatus.PAID } as any);
+
+    const webhookData = {
+      orderCode: 123456789012345,
+      amount: 250000,
+      description: 'NEURA1234567890123',
+      accountNumber: '123456789',
+      reference: 'FT123456',
+      transactionDateTime: '2026-04-18 10:30:00',
+      currency: 'VND',
+      paymentLinkId: 'plink_1',
+      code: '00',
+      desc: 'success',
+      counterAccountBankId: '',
+      counterAccountBankName: '',
+      counterAccountName: '',
+      counterAccountNumber: '',
+      virtualAccountName: '',
+      virtualAccountNumber: '',
+    };
+
+    const webhookRaw = Object.keys(webhookData)
+      .sort()
+      .map((key) => `${key}=${(webhookData as any)[key]}`)
+      .join('&');
+
+    const signature = createHmac('sha256', configMap.PAYOS_CHECKSUM_KEY)
+      .update(webhookRaw)
+      .digest('hex');
+
+    await service.handlePayosWebhook({
+      code: '00',
+      desc: 'success',
+      data: webhookData,
+      signature,
+      success: true,
+    });
+
+    expect(markOrderPaidSpy).toHaveBeenCalledWith('order-1', {
+      providerOrderId: 'FT123456',
+    });
+
+    markOrderPaidSpy.mockRestore();
+  });
+
+  it('confirms payOS webhook URL from env', async () => {
+    const configMap: Record<string, string> = {
+      PAYOS_ENDPOINT: 'https://api-merchant.payos.vn',
+      PAYOS_CLIENT_ID: 'client-id',
+      PAYOS_API_KEY: 'api-key',
+      PAYOS_CHECKSUM_KEY: 'checksum-key',
+      PAYOS_RETURN_URL: 'http://localhost:5173/billing/payos-return',
+      PAYOS_CANCEL_URL: 'http://localhost:5173/billing/payos-return',
+      PAYOS_WEBHOOK_URL: 'https://api.example.com/billing/webhooks/payos',
+    };
+    configService.get.mockImplementation((key: string) => configMap[key]);
+
+    const postSpy = jest.spyOn(axios, 'post').mockResolvedValue({
+      data: {
+        code: '00',
+        desc: 'success',
+        data: {
+          webhookUrl: configMap.PAYOS_WEBHOOK_URL,
+        },
+      },
+    } as any);
+
+    const result = await service.confirmPayosWebhook();
+
+    expect(postSpy).toHaveBeenCalledWith(
+      'https://api-merchant.payos.vn/confirm-webhook',
+      {
+        webhookUrl: configMap.PAYOS_WEBHOOK_URL,
+      },
+      expect.anything(),
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        webhookUrl: configMap.PAYOS_WEBHOOK_URL,
+      }),
+    );
+
+    postSpy.mockRestore();
   });
 });

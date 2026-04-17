@@ -415,6 +415,7 @@ enum CreditReason {
 
 enum PaymentProvider {
   MOMO
+  PAYOS
   BANK_TRANSFER
 }
 

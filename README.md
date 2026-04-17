@@ -123,6 +123,17 @@ MOMO_PARTNER_NAME=Neura Gen
 MOMO_STORE_ID=NeuraGen
 MOMO_LANG=vi
 MOMO_AUTO_CAPTURE=true
+
+# payOS
+PAYOS_ENDPOINT=https://api-merchant.payos.vn
+PAYOS_CLIENT_ID=your_payos_client_id
+PAYOS_API_KEY=your_payos_api_key
+PAYOS_CHECKSUM_KEY=your_payos_checksum_key
+PAYOS_RETURN_URL=http://localhost:5173/billing/payos-return
+PAYOS_CANCEL_URL=http://localhost:5173/billing/payos-return
+# Optional
+PAYOS_WEBHOOK_URL=https://your-public-api.example.com/billing/webhooks/payos
+PAYOS_PARTNER_CODE=optional_partner_code
 ```
 
 ### Ý nghĩa nhanh của các biến quan trọng
@@ -141,6 +152,7 @@ MOMO_AUTO_CAPTURE=true
 - `PASSWORD_RESET_TOKEN_TTL_MINUTES`: thời gian hết hạn token reset password
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL`: cấu hình đăng nhập nhanh bằng Google OAuth2
 - `MOMO_*`: cấu hình tạo link thanh toán và nhận IPN webhook từ MoMo
+- `PAYOS_*`: cấu hình tạo payment link và verify webhook chữ ký từ payOS
 
 Lưu ý:
 
@@ -437,5 +449,5 @@ pwsh -File scripts/smoke-test-turbo.ps1 -ImagePath path\to\input.png
 
 - [Auth Email + Google OAuth2 Integration Guide](docs/auth-email-oauth2.md)
 - [Jobs SSE Integration Guide](docs/jobs-sse.md)
-- [Billing + MoMo Integration Guide](docs/billing-momo-integration.md)
+- [Billing Integration Guide (MoMo + payOS)](docs/billing-momo-integration.md)
 - [TurboDiffusion Wan2.2 I2V A14B Report](docs/turbodiffusion-wan22-i2v-a14b-report.md)

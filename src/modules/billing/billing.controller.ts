@@ -8,6 +8,7 @@ import { JwtPayload } from 'src/common/guards/jwt-auth.guard';
 import { BillingService } from './billing.service';
 import { CreatePaymentOrderDto } from './dto/create-payment-order.dto';
 import { MarkPaymentPaidDto } from './dto/mark-payment-paid.dto';
+import { ConfirmPayosWebhookDto } from './dto/confirm-payos-webhook.dto';
 
 @ApiTags('billing')
 @ApiBearerAuth('access-token')
@@ -24,7 +25,7 @@ export class BillingController {
   }
 
   @ApiOperation({
-    summary: 'Tạo đơn thanh toán (MoMo hoặc chuyển khoản)',
+    summary: 'Tạo đơn thanh toán (MoMo, payOS hoặc chuyển khoản)',
   })
   @Post('orders')
   createOrder(@CurrentUser() user: JwtPayload, @Body() dto: CreatePaymentOrderDto) {
@@ -56,5 +57,27 @@ export class BillingController {
   @Post('webhooks/momo')
   async momoWebhook(@Body() payload: Record<string, unknown>) {
     await this.billingService.handleMomoIpn(payload);
+  }
+
+  @ApiOperation({
+    summary: 'payOS webhook callback',
+    description: 'Endpoint public để payOS callback kết quả thanh toán.',
+  })
+  @Public()
+  @HttpCode(204)
+  @Post('webhooks/payos')
+  async payosWebhook(@Body() payload: Record<string, unknown>) {
+    await this.billingService.handlePayosWebhook(payload);
+  }
+
+  @ApiOperation({
+    summary: 'Xác nhận webhook URL với payOS',
+    description:
+      'API nội bộ cho ADMIN để đăng ký/confirm webhook URL với payOS sau khi có domain public.',
+  })
+  @Roles(UserRole.ADMIN)
+  @Post('webhooks/payos/confirm')
+  confirmPayosWebhook(@Body() dto: ConfirmPayosWebhookDto) {
+    return this.billingService.confirmPayosWebhook(dto.webhookUrl);
   }
 }

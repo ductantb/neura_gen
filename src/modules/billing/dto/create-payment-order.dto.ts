@@ -12,7 +12,7 @@ export class CreatePaymentOrderDto {
 
   @ApiProperty({
     enum: PaymentProvider,
-    example: PaymentProvider.MOMO,
+    example: PaymentProvider.PAYOS,
   })
   @IsEnum(PaymentProvider)
   provider: PaymentProvider;
