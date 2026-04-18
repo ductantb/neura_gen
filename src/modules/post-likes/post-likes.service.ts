@@ -3,13 +3,17 @@ import { CreatePostLikeDto } from './dto/create-post-like.dto';
 import { PrismaService } from 'src/infra/prisma/prisma.service';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
 import { UserRole } from '@prisma/client';
+import { ExploreService } from '../explore/explore.service';
 
 @Injectable()
 export class PostLikesService {
-  constructor(private readonly prismaService: PrismaService) {}
+  constructor(
+    private readonly prismaService: PrismaService,
+    private readonly exploreService: ExploreService,
+  ) {}
 
-  create(userId: string, createPostLikeDto: CreatePostLikeDto) {
-    return this.prismaService.$transaction(async (prisma) => {
+  async create(userId: string, createPostLikeDto: CreatePostLikeDto) {
+    const postLike = await this.prismaService.$transaction(async (prisma) => {
       const postLike = await prisma.postLike.create({
         data: {
           ...createPostLikeDto,
@@ -22,6 +26,9 @@ export class PostLikesService {
       });
       return postLike;
     });
+
+    await this.exploreService.syncPost(createPostLikeDto.postId);
+    return postLike;
   }
 
   async findUsers(postId: string, { cursor, take }: PaginationDto) {
@@ -69,13 +76,29 @@ export class PostLikesService {
     if (postLike.userId !== user.sub && user.role !== UserRole.ADMIN)
       throw new ForbiddenException('Không có quyền xoá post like này');
 
-    return this.prismaService.postLike.delete({
-      where: {
-        userId_postId: {
-          userId: user.sub,
-          postId,
+    const deleted = await this.prismaService.$transaction(async (prisma) => {
+      const deleted = await prisma.postLike.delete({
+        where: {
+          userId_postId: {
+            userId: user.sub,
+            postId,
+          },
         },
-      },
+      });
+
+      await prisma.post.update({
+        where: { id: postId },
+        data: {
+          likeCount: {
+            decrement: 1,
+          },
+        },
+      });
+
+      return deleted;
     });
+
+    await this.exploreService.syncPost(postId);
+    return deleted;
   }
 }

@@ -9,6 +9,13 @@ export type VideoGenerationPresetId =
   | 'standard_wan22_ti2v'
   | 'quality_hunyuan_i2v';
 
+export const PRO_ONLY_VIDEO_PRESET_IDS: ReadonlyArray<VideoGenerationPresetId> = [
+  'turbo_wan22_i2v_a14b',
+  'quality_hunyuan_i2v',
+];
+
+export const PRO_DAILY_FREE_PREMIUM_CREDITS = 20;
+
 export interface VideoGenerationPreset {
   id: VideoGenerationPresetId;
   label: string;
@@ -89,4 +96,8 @@ export function resolveVideoPreset(
   }
 
   return preset;
+}
+
+export function isProOnlyPreset(presetId: VideoGenerationPresetId): boolean {
+  return PRO_ONLY_VIDEO_PRESET_IDS.includes(presetId);
 }

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
+import { MailService } from 'src/infra/mail/mail.service';
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -23,6 +24,14 @@ describe('AuthService', () => {
           provide: ConfigService,
           useValue: {
             getOrThrow: jest.fn(),
+          },
+        },
+        {
+          provide: MailService,
+          useValue: {
+            sendWelcomeEmail: jest.fn(),
+            sendPasswordResetEmail: jest.fn(),
+            sendPasswordChangedEmail: jest.fn(),
           },
         },
       ],

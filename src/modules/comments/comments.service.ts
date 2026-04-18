@@ -8,13 +8,17 @@ import { UpdateCommentDto } from './dto/update-comment.dto';
 import { PrismaService } from 'src/infra/prisma/prisma.service';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
 import { UserRole } from '@prisma/client';
+import { ExploreService } from '../explore/explore.service';
 
 @Injectable()
 export class CommentsService {
-  constructor(private readonly prismaService: PrismaService) {}
+  constructor(
+    private readonly prismaService: PrismaService,
+    private readonly exploreService: ExploreService,
+  ) {}
 
-  create(userId: string, createCommentDto: CreateCommentDto) {
-    return this.prismaService.$transaction(async (prisma) => {
+  async create(userId: string, createCommentDto: CreateCommentDto) {
+    const comment = await this.prismaService.$transaction(async (prisma) => {
       await prisma.post.update({
         where: { id: createCommentDto.postId },
         data: { commentCount: { increment: 1 } },
@@ -26,6 +30,9 @@ export class CommentsService {
         },
       });
     });
+
+    await this.exploreService.syncPost(createCommentDto.postId);
+    return comment;
   }
 
   async findComments(postId: string, { cursor, take = 20 }: PaginationDto) {
@@ -91,7 +98,7 @@ export class CommentsService {
       throw new ForbiddenException('Không có quyền xoá comment này');
     }
 
-    return this.prismaService.$transaction(async (prisma) => {
+    const deleted = await this.prismaService.$transaction(async (prisma) => {
       await prisma.post.update({
         where: { id: comment.postId },
         data: { commentCount: { decrement: 1 } },
@@ -100,5 +107,8 @@ export class CommentsService {
         where: { id },
       });
     });
+
+    await this.exploreService.syncPost(comment.postId);
+    return deleted;
   }
 }

@@ -1,4 +1,12 @@
-import { Controller, Post, Body, Patch } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  Patch,
+  Get,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiCreatedResponse,
@@ -6,6 +14,7 @@ import {
   ApiOperation,
   ApiBadRequestResponse,
   ApiUnauthorizedResponse,
+  ApiForbiddenResponse,
 } from '@nestjs/swagger';
 
 import { AuthService } from './auth.service';
@@ -18,10 +27,21 @@ import {
 import { AuthResponseDto } from './dto/auth-response.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { LogoutDto } from './dto/logout.dto';
+import {
+  ForgotPasswordDto,
+  ForgotPasswordResponseDto,
+} from './dto/forgot-password.dto';
+import {
+  ResetPasswordDto,
+  ResetPasswordResponseDto,
+} from './dto/reset-password.dto';
 
 import { Public } from 'src/common/decorators/public.decorator';
 import { CurrentUser } from 'src/common/decorators/user.decorator';
 import { JwtPayload } from 'src/common/guards/jwt-auth.guard';
+import type { Request } from 'express';
+import { GoogleProfilePayload } from './strategies/google.strategy';
+import { GoogleOauthGuard } from './guards/google-oauth.guard';
 
 @Controller('auth')
 export class AuthController {
@@ -59,6 +79,28 @@ export class AuthController {
   @Post('login')
   login(@Body() dto: LoginDto) {
     return this.authService.login(dto.email, dto.password);
+  }
+
+  @ApiOperation({
+    summary: 'Đăng nhập nhanh bằng Google OAuth2',
+    description: 'Chuyển hướng người dùng sang Google để xác thực.',
+  })
+  @Public()
+  @Get('google')
+  @UseGuards(GoogleOauthGuard)
+  googleAuth() {
+    return;
+  }
+
+  @ApiOperation({
+    summary: 'Google OAuth2 callback',
+    description: 'Google redirect về endpoint này, hệ thống trả JWT/refresh token.',
+  })
+  @Public()
+  @Get('google/callback')
+  @UseGuards(GoogleOauthGuard)
+  googleAuthCallback(@Req() req: Request) {
+    return this.authService.loginWithGoogle(req.user as GoogleProfilePayload);
   }
 
   @ApiOperation({
@@ -133,5 +175,36 @@ export class AuthController {
       dto.oldPassword,
       dto.newPassword,
     );
+  }
+
+  @ApiOperation({
+    summary: 'Quên mật khẩu',
+    description: 'Gửi email chứa link reset mật khẩu qua Gmail SMTP.',
+  })
+  @ApiOkResponse({
+    description: 'Yêu cầu reset mật khẩu đã được tiếp nhận',
+    type: ForgotPasswordResponseDto,
+  })
+  @Public()
+  @Post('forgot-password')
+  forgotPassword(@Body() dto: ForgotPasswordDto) {
+    return this.authService.forgotPassword(dto.email);
+  }
+
+  @ApiOperation({
+    summary: 'Đặt lại mật khẩu',
+    description: 'Đặt mật khẩu mới bằng reset token nhận từ email.',
+  })
+  @ApiOkResponse({
+    description: 'Đặt lại mật khẩu thành công',
+    type: ResetPasswordResponseDto,
+  })
+  @ApiForbiddenResponse({
+    description: 'Token không hợp lệ hoặc đã hết hạn',
+  })
+  @Public()
+  @Post('reset-password')
+  resetPassword(@Body() dto: ResetPasswordDto) {
+    return this.authService.resetPassword(dto.token, dto.newPassword);
   }
 }

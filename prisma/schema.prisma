@@ -10,23 +10,31 @@ datasource db {
 model User {
   id                 String              @id @default(uuid())
   email              String              @unique
+  googleId           String?             @unique
   password           String
   username           String
   bio                String?
   avatarUrl          String?
   role               UserRole            @default(FREE)
+  proExpiresAt       DateTime?
   createdAt          DateTime            @default(now())
   canvasSessions     CanvasSession[]
   comments           Comment[]
   creditTransactions CreditTransaction[]
+  dailyUsages        UserDailyUsage[]
   following          Follow[]            @relation("following")
   followers          Follow[]            @relation("followers")
   galleries          GalleryItem[]
   jobs               GenerateJob[]
+  paymentOrders      PaymentOrder[]
   posts              Post[]
   likes              PostLike[]
   credits            UserCredit?
   assets             Asset[]
+  exploreEvents      ExploreInteraction[]
+  topicProfiles      UserTopicProfile[]
+  hiddenPosts        HiddenPost[]
+  passwordResetTokens PasswordResetToken[]
 
   refreshSessions RefreshSession[]
 }
@@ -52,6 +60,20 @@ model RefreshSession {
   @@index([expiresAt])
 }
 
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([expiresAt])
+}
+
 model UserCredit {
   userId    String   @id
   balance   Int      @default(0)
@@ -67,6 +89,44 @@ model CreditTransaction {
   metadata  Json?
   createdAt DateTime     @default(now())
   user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model UserDailyUsage {
+  id                     String   @id @default(uuid())
+  userId                 String
+  dateKey                String
+  premiumFreeCreditsUsed Int      @default(0)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, dateKey])
+  @@index([dateKey])
+}
+
+model PaymentOrder {
+  id             String             @id @default(uuid())
+  userId         String
+  provider       PaymentProvider
+  type           PaymentOrderType
+  status         PaymentOrderStatus @default(PENDING)
+  packageCode    String
+  amountUsd      Decimal            @db.Decimal(10, 2)
+  creditAmount   Int                @default(0)
+  proDurationDays Int               @default(0)
+  providerOrderId String?           @unique
+  metadata       Json?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  paidAt         DateTime?
+  expiresAt      DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@index([type, createdAt])
 }
 
 model GenerateJob {
@@ -213,6 +273,55 @@ model Post {
   assetVersion   AssetVersion @relation(fields: [assetVersionId], references: [id])
   user           User         @relation(fields: [userId], references: [id])
   likes          PostLike[]
+  exploreEvents  ExploreInteraction[]
+  hiddenByUsers  HiddenPost[]
+}
+
+model ExploreInteraction {
+  id        String           @id @default(uuid())
+  userId    String
+  postId    String
+  topic     String?
+  eventType ExploreEventType
+  weight    Float
+  metadata  Json?
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([postId, createdAt])
+  @@index([userId, eventType, createdAt])
+}
+
+model UserTopicProfile {
+  id          String   @id @default(uuid())
+  userId      String
+  topic       String
+  score       Float    @default(0)
+  lastEventAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, topic])
+  @@index([userId, score])
+  @@index([topic])
+}
+
+model HiddenPost {
+  id        String   @id @default(uuid())
+  userId    String
+  postId    String
+  reason    String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, postId])
+  @@index([userId, createdAt])
 }
 
 model PostLike {
@@ -292,6 +401,9 @@ enum CreditReason {
   REGISTER_BONUS
   ADMIN_TOPUP
   TEST_REWARD
+  PURCHASE_TOPUP
+  PURCHASE_PRO_SUBSCRIPTION
+  PRO_DAILY_FREE_USAGE
 
   // spend
   CREATE_IMAGE_TO_VIDEO_JOB
@@ -299,4 +411,34 @@ enum CreditReason {
   // refund
   REFUND_FAILED_JOB
   REFUND_CANCELED_JOB
+}
+
+enum PaymentProvider {
+  MOMO
+  PAYOS
+  BANK_TRANSFER
+}
+
+enum PaymentOrderType {
+  CREDIT_TOPUP
+  PRO_SUBSCRIPTION
+}
+
+enum PaymentOrderStatus {
+  PENDING
+  PAID
+  FAILED
+  CANCELED
+  EXPIRED
+}
+
+enum ExploreEventType {
+  IMPRESSION
+  OPEN_POST
+  WATCH_3S
+  WATCH_50
+  LIKE
+  COMMENT
+  FOLLOW_CREATOR
+  HIDE
 }

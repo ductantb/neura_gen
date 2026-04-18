@@ -1,4 +1,4 @@
-import { ServiceUnavailableException } from '@nestjs/common';
+import { ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
 import { JobStatus } from '@prisma/client';
 import { JobEventsService } from './job-events.service';
 import { JobsService } from './jobs.service';
@@ -11,6 +11,14 @@ describe('JobsService', () => {
   const prisma = {
     asset: {
       findUnique: jest.fn(),
+    },
+    user: {
+      findUnique: jest.fn(),
+      update: jest.fn(),
+    },
+    userDailyUsage: {
+      upsert: jest.fn(),
+      update: jest.fn(),
     },
     userCredit: {
       update: jest.fn(),
@@ -47,6 +55,21 @@ describe('JobsService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'user-1',
+      role: 'FREE',
+      proExpiresAt: null,
+    });
+    prisma.userDailyUsage.upsert.mockResolvedValue({
+      userId: 'user-1',
+      dateKey: '2026-03-31',
+      premiumFreeCreditsUsed: 0,
+    });
+    prisma.userDailyUsage.update.mockResolvedValue({
+      userId: 'user-1',
+      dateKey: '2026-03-31',
+      premiumFreeCreditsUsed: 0,
+    });
     prisma.jobLog.create.mockImplementation(({ data }: any) =>
       Promise.resolve({
         jobId: data.jobId,
@@ -92,6 +115,14 @@ describe('JobsService', () => {
     prisma.$transaction
       .mockImplementationOnce(async (callback: any) =>
         callback({
+          user: {
+            findUnique: prisma.user.findUnique,
+            update: prisma.user.update,
+          },
+          userDailyUsage: {
+            upsert: prisma.userDailyUsage.upsert,
+            update: prisma.userDailyUsage.update,
+          },
           userCredit: {
             findUnique: jest.fn().mockResolvedValue({ userId: 'user-1', balance: 100 }),
             update: prisma.userCredit.update,
@@ -181,6 +212,14 @@ describe('JobsService', () => {
     prisma.$transaction
       .mockImplementationOnce(async (callback: any) =>
         callback({
+          user: {
+            findUnique: prisma.user.findUnique,
+            update: prisma.user.update,
+          },
+          userDailyUsage: {
+            upsert: prisma.userDailyUsage.upsert,
+            update: prisma.userDailyUsage.update,
+          },
           userCredit: {
             findUnique: jest.fn().mockResolvedValue({ userId: 'user-1', balance: 100 }),
             update: prisma.userCredit.update,
@@ -263,6 +302,14 @@ describe('JobsService', () => {
     prisma.$transaction
       .mockImplementationOnce(async (callback: any) =>
         callback({
+          user: {
+            findUnique: prisma.user.findUnique,
+            update: prisma.user.update,
+          },
+          userDailyUsage: {
+            upsert: prisma.userDailyUsage.upsert,
+            update: prisma.userDailyUsage.update,
+          },
           userCredit: {
             findUnique: jest.fn().mockResolvedValue({ userId: 'user-1', balance: 100 }),
             update: prisma.userCredit.update,
@@ -325,6 +372,16 @@ describe('JobsService', () => {
       modelName: 'hunyuan-video-i2v-quality',
     };
     const createJob = jest.fn().mockResolvedValue(createdJob);
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'user-1',
+      role: 'PRO',
+      proExpiresAt: new Date('2026-06-01T00:00:00.000Z'),
+    });
+    prisma.userDailyUsage.upsert.mockResolvedValue({
+      userId: 'user-1',
+      dateKey: '2026-03-31',
+      premiumFreeCreditsUsed: 20,
+    });
 
     prisma.asset.findUnique.mockResolvedValue(inputAsset);
     prisma.generateJob.update.mockResolvedValue({
@@ -340,6 +397,14 @@ describe('JobsService', () => {
     prisma.$transaction
       .mockImplementationOnce(async (callback: any) =>
         callback({
+          user: {
+            findUnique: prisma.user.findUnique,
+            update: prisma.user.update,
+          },
+          userDailyUsage: {
+            upsert: prisma.userDailyUsage.upsert,
+            update: prisma.userDailyUsage.update,
+          },
           userCredit: {
             findUnique: jest.fn().mockResolvedValue({ userId: 'user-1', balance: 100 }),
             update: prisma.userCredit.update,
@@ -415,6 +480,16 @@ describe('JobsService', () => {
       modelName: 'wan2.2-i2v-a14b-turbo',
     };
     const createJob = jest.fn().mockResolvedValue(createdJob);
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'user-1',
+      role: 'PRO',
+      proExpiresAt: new Date('2026-06-01T00:00:00.000Z'),
+    });
+    prisma.userDailyUsage.upsert.mockResolvedValue({
+      userId: 'user-1',
+      dateKey: '2026-03-31',
+      premiumFreeCreditsUsed: 20,
+    });
 
     prisma.asset.findUnique.mockResolvedValue(inputAsset);
     prisma.generateJob.update.mockResolvedValue({
@@ -430,6 +505,14 @@ describe('JobsService', () => {
     prisma.$transaction
       .mockImplementationOnce(async (callback: any) =>
         callback({
+          user: {
+            findUnique: prisma.user.findUnique,
+            update: prisma.user.update,
+          },
+          userDailyUsage: {
+            upsert: prisma.userDailyUsage.upsert,
+            update: prisma.userDailyUsage.update,
+          },
           userCredit: {
             findUnique: jest.fn().mockResolvedValue({ userId: 'user-1', balance: 100 }),
             update: prisma.userCredit.update,
@@ -490,6 +573,125 @@ describe('JobsService', () => {
         estimatedDurationSeconds: 240,
       }),
     );
+  });
+
+  it('rejects premium presets for FREE users', async () => {
+    prisma.asset.findUnique.mockResolvedValue({
+      id: 'asset-1',
+      userId: 'user-1',
+      role: 'INPUT',
+      versions: [{ objectKey: 'input.png' }],
+    });
+    prisma.$transaction.mockImplementationOnce(async (callback: any) =>
+      callback({
+        user: {
+          findUnique: prisma.user.findUnique,
+          update: prisma.user.update,
+        },
+        userDailyUsage: {
+          upsert: prisma.userDailyUsage.upsert,
+          update: prisma.userDailyUsage.update,
+        },
+        userCredit: {
+          findUnique: jest.fn(),
+          update: prisma.userCredit.update,
+        },
+        creditTransaction: {
+          create: prisma.creditTransaction.create,
+        },
+        generateJob: {
+          create: prisma.generateJob.create,
+        },
+      }),
+    );
+
+    await expect(
+      service.createVideoJob('user-1', {
+        inputAssetId: 'asset-1',
+        prompt: 'prompt',
+        presetId: 'turbo_wan22_i2v_a14b',
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('uses daily free premium credits before charging wallet for PRO users', async () => {
+    const createJob = jest.fn().mockResolvedValue({
+      id: 'job-free-quota',
+      userId: 'user-1',
+      creditCost: 0,
+      provider: 'modal',
+      modelName: 'wan2.2-i2v-a14b-turbo',
+    });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'user-1',
+      role: 'PRO',
+      proExpiresAt: new Date('2026-06-01T00:00:00.000Z'),
+    });
+    prisma.userDailyUsage.upsert.mockResolvedValue({
+      userId: 'user-1',
+      dateKey: '2026-03-31',
+      premiumFreeCreditsUsed: 5,
+    });
+    prisma.asset.findUnique.mockResolvedValue({
+      id: 'asset-1',
+      userId: 'user-1',
+      role: 'INPUT',
+      versions: [{ objectKey: 'input.png' }],
+    });
+    prisma.generateJob.update.mockResolvedValue({
+      id: 'job-free-quota',
+      status: JobStatus.QUEUED,
+      progress: 1,
+      errorMessage: null,
+      startedAt: null,
+      completedAt: null,
+      failedAt: null,
+      updatedAt: now,
+    });
+    prisma.$transaction
+      .mockImplementationOnce(async (callback: any) =>
+        callback({
+          user: {
+            findUnique: prisma.user.findUnique,
+            update: prisma.user.update,
+          },
+          userDailyUsage: {
+            upsert: prisma.userDailyUsage.upsert,
+            update: prisma.userDailyUsage.update,
+          },
+          userCredit: {
+            findUnique: jest.fn().mockResolvedValue({ userId: 'user-1', balance: 100 }),
+            update: prisma.userCredit.update,
+          },
+          creditTransaction: {
+            create: prisma.creditTransaction.create,
+          },
+          generateJob: {
+            create: createJob,
+          },
+        }),
+      )
+      .mockImplementationOnce(async (callback: any) =>
+        callback({
+          generateJob: {
+            update: prisma.generateJob.update,
+          },
+          jobLog: {
+            create: prisma.jobLog.create,
+          },
+        }),
+      );
+    videoQueue.add.mockResolvedValue({ id: 'job-free-quota' });
+
+    const result = await service.createVideoJob('user-1', {
+      inputAssetId: 'asset-1',
+      prompt: 'prompt',
+      presetId: 'turbo_wan22_i2v_a14b',
+    });
+
+    expect(prisma.userDailyUsage.update).toHaveBeenCalled();
+    expect(prisma.userCredit.update).not.toHaveBeenCalled();
+    expect(result.creditCost).toBe(0);
   });
 
   it('resolves input assets from extraConfig instead of job asset ownership', async () => {

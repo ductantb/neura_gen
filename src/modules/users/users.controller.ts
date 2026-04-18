@@ -19,12 +19,14 @@ import {
   ApiOperation,
   ApiQuery,
 } from '@nestjs/swagger';
+import { UserRole } from '@prisma/client';
 import { MyProfileResponseDto } from './dto/my-profile-response.dto';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
 import {
   TopUpCreditDto,
   TopUpCreditResponseDto,
 } from './dto/top-up-credit.dto';
+import { Roles } from 'src/common/decorators/roles.decorator';
 
 @ApiBearerAuth('access-token')
 @Controller('users')
@@ -60,6 +62,7 @@ export class UsersController {
     description: 'Cộng credit thành công',
     type: TopUpCreditResponseDto,
   })
+  @Roles(UserRole.ADMIN)
   @Post('me/credits/topup')
   topUpMyCredits(
     @CurrentUser() user: JwtPayload,

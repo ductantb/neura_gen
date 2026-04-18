@@ -2,12 +2,13 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { randomUUID } from 'crypto';
+import { createHash, randomBytes, randomUUID } from 'crypto';
 
 import { hashPassword, comparePassword } from '../../utils/hash';
 import { JwtPayload } from 'src/common/guards/jwt-auth.guard';
@@ -15,6 +16,8 @@ import { AuthResponseDto } from './dto/auth-response.dto';
 import { ChangePasswordResponseDto } from './dto/change-password.dto';
 import { User, UserRole } from '@prisma/client';
 import { StringValue } from 'ms';
+import { MailService } from 'src/infra/mail/mail.service';
+import { GoogleProfilePayload } from './strategies/google.strategy';
 
 type RefreshTokenPayload = {
   sub: string;
@@ -27,10 +30,13 @@ type RefreshTokenPayload = {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly mailService: MailService,
   ) {}
 
   async register(email: string, password: string): Promise<AuthResponseDto> {
@@ -64,6 +70,7 @@ export class AuthService {
       },
     });
 
+    await this.mailService.sendWelcomeEmail(user.email);
     return this.issueTokenPair(user);
   }
 
@@ -82,6 +89,63 @@ export class AuthService {
     }
 
     return this.issueTokenPair(user);
+  }
+
+  async loginWithGoogle(profile: GoogleProfilePayload): Promise<AuthResponseDto> {
+    const normalizedEmail = profile.email.trim().toLowerCase();
+
+    const existingByGoogleId = await this.prisma.user.findUnique({
+      where: { googleId: profile.googleId },
+    });
+
+    if (existingByGoogleId) {
+      return this.issueTokenPair(existingByGoogleId);
+    }
+
+    const existingByEmail = await this.prisma.user.findUnique({
+      where: { email: normalizedEmail },
+    });
+
+    if (existingByEmail) {
+      const linkedUser = await this.prisma.user.update({
+        where: { id: existingByEmail.id },
+        data: {
+          googleId: profile.googleId,
+          ...(profile.avatarUrl && !existingByEmail.avatarUrl
+            ? { avatarUrl: profile.avatarUrl }
+            : {}),
+        },
+      });
+
+      return this.issueTokenPair(linkedUser);
+    }
+
+    const randomPassword = randomBytes(32).toString('hex');
+    const hashed = await hashPassword(randomPassword);
+
+    const newUser = await this.prisma.user.create({
+      data: {
+        email: normalizedEmail,
+        googleId: profile.googleId,
+        password: hashed,
+        username: profile.username,
+        avatarUrl: profile.avatarUrl,
+        credits: {
+          create: {
+            balance: 100,
+          },
+        },
+        creditTransactions: {
+          create: {
+            amount: 100,
+            reason: 'REGISTER_BONUS',
+          },
+        },
+      },
+    });
+
+    await this.mailService.sendWelcomeEmail(newUser.email);
+    return this.issueTokenPair(newUser);
   }
 
   async refreshTokens(refreshToken: string): Promise<AuthResponseDto> {
@@ -185,7 +249,7 @@ export class AuthService {
   ): Promise<ChangePasswordResponseDto> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { password: true },
+      select: { email: true, password: true },
     });
 
     if (!user) {
@@ -213,9 +277,97 @@ export class AuthService {
           revokedAt: new Date(),
         },
       }),
+      this.prisma.passwordResetToken.deleteMany({
+        where: { userId },
+      }),
     ]);
 
+    await this.mailService.sendPasswordChangedEmail(user.email);
     return { message: 'Password changed successfully' };
+  }
+
+  async forgotPassword(email: string): Promise<{ message: string }> {
+    const genericMessage =
+      'If this email exists in our system, a password reset link has been sent.';
+
+    const user = await this.prisma.user.findUnique({
+      where: { email },
+      select: { id: true, email: true },
+    });
+
+    if (!user) {
+      return { message: genericMessage };
+    }
+
+    const resetToken = randomBytes(32).toString('hex');
+    const tokenHash = this.hashToken(resetToken);
+    const ttlMinutes = this.getResetTokenTtlMinutes();
+    const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000);
+
+    await this.prisma.$transaction([
+      this.prisma.passwordResetToken.deleteMany({
+        where: { userId: user.id },
+      }),
+      this.prisma.passwordResetToken.create({
+        data: {
+          userId: user.id,
+          tokenHash,
+          expiresAt,
+        },
+      }),
+    ]);
+
+    await this.mailService.sendPasswordResetEmail(user.email, resetToken);
+
+    return { message: genericMessage };
+  }
+
+  async resetPassword(
+    resetToken: string,
+    newPassword: string,
+  ): Promise<{ message: string }> {
+    const tokenHash = this.hashToken(resetToken);
+
+    const tokenRecord = await this.prisma.passwordResetToken.findUnique({
+      where: { tokenHash },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    if (!tokenRecord || tokenRecord.usedAt || tokenRecord.expiresAt.getTime() <= Date.now()) {
+      throw new ForbiddenException('Reset token is invalid or expired');
+    }
+
+    const hashedPassword = await hashPassword(newPassword);
+
+    await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: tokenRecord.userId },
+        data: { password: hashedPassword },
+      }),
+      this.prisma.refreshSession.updateMany({
+        where: {
+          userId: tokenRecord.userId,
+          revokedAt: null,
+        },
+        data: {
+          revokedAt: new Date(),
+        },
+      }),
+      this.prisma.passwordResetToken.update({
+        where: { id: tokenRecord.id },
+        data: { usedAt: new Date() },
+      }),
+    ]);
+
+    await this.mailService.sendPasswordChangedEmail(tokenRecord.user.email);
+    return { message: 'Password reset successfully' };
   }
 
   private async issueTokenPair(user: User): Promise<AuthResponseDto> {
@@ -324,5 +476,24 @@ export class AuthService {
     };
 
     return new Date(Date.now() + amount * multiplier[unit]);
+  }
+
+  private hashToken(rawToken: string): string {
+    return createHash('sha256').update(rawToken).digest('hex');
+  }
+
+  private getResetTokenTtlMinutes(): number {
+    const rawValue =
+      this.configService.get<string>('PASSWORD_RESET_TOKEN_TTL_MINUTES') ?? '15';
+    const value = Number(rawValue);
+
+    if (!Number.isFinite(value) || value <= 0) {
+      this.logger.warn(
+        `Invalid PASSWORD_RESET_TOKEN_TTL_MINUTES=${rawValue}. Fallback to 15.`,
+      );
+      return 15;
+    }
+
+    return value;
   }
 }

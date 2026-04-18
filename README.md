@@ -95,6 +95,45 @@ AWS_S3_BUCKET=your_bucket_name
 
 STORAGE_DRIVER=s3
 S3_KEY_PREFIX=neuragen
+
+# Gmail SMTP (App Password)
+MAIL_HOST=smtp.gmail.com
+MAIL_PORT=587
+MAIL_SECURE=false
+MAIL_USER=your_gmail_address
+MAIL_APP_PASSWORD=your_gmail_app_password
+MAIL_FROM="Neura Gen <your_gmail_address>"
+FRONTEND_URL=http://localhost:5173
+PASSWORD_RESET_TOKEN_TTL_MINUTES=15
+
+# Google OAuth2 (quick login)
+GOOGLE_CLIENT_ID=your_google_client_id
+GOOGLE_CLIENT_SECRET=your_google_client_secret
+GOOGLE_CALLBACK_URL=http://localhost:3000/auth/google/callback
+
+# MoMo Payment Gateway
+MOMO_ENDPOINT=https://test-payment.momo.vn
+MOMO_PARTNER_CODE=your_momo_partner_code
+MOMO_ACCESS_KEY=your_momo_access_key
+MOMO_SECRET_KEY=your_momo_secret_key
+MOMO_REDIRECT_URL=http://localhost:5173/billing/momo-return
+MOMO_IPN_URL=https://your-public-api.example.com/billing/webhooks/momo
+MOMO_REQUEST_TYPE=payWithMethod
+MOMO_PARTNER_NAME=Neura Gen
+MOMO_STORE_ID=NeuraGen
+MOMO_LANG=vi
+MOMO_AUTO_CAPTURE=true
+
+# payOS
+PAYOS_ENDPOINT=https://api-merchant.payos.vn
+PAYOS_CLIENT_ID=your_payos_client_id
+PAYOS_API_KEY=your_payos_api_key
+PAYOS_CHECKSUM_KEY=your_payos_checksum_key
+PAYOS_RETURN_URL=http://localhost:5173/billing/payos-return
+PAYOS_CANCEL_URL=http://localhost:5173/billing/payos-return
+# Optional
+PAYOS_WEBHOOK_URL=https://your-public-api.example.com/billing/webhooks/payos
+PAYOS_PARTNER_CODE=optional_partner_code
 ```
 
 ### Ý nghĩa nhanh của các biến quan trọng
@@ -108,6 +147,12 @@ S3_KEY_PREFIX=neuragen
 - `REDIS_HOST`, `REDIS_PORT`: Redis cho BullMQ
 - `RUN_WORKER`: bật/tắt worker trong tiến trình hiện tại
 - `AWS_*`, `AWS_S3_BUCKET`: cấu hình lưu file lên S3
+- `MAIL_*`: cấu hình Gmail SMTP để gửi email auth
+- `FRONTEND_URL`: URL frontend dùng để tạo reset link
+- `PASSWORD_RESET_TOKEN_TTL_MINUTES`: thời gian hết hạn token reset password
+- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL`: cấu hình đăng nhập nhanh bằng Google OAuth2
+- `MOMO_*`: cấu hình tạo link thanh toán và nhận IPN webhook từ MoMo
+- `PAYOS_*`: cấu hình tạo payment link và verify webhook chữ ký từ payOS
 
 Lưu ý:
 
@@ -294,6 +339,9 @@ Lưu ý:
 
 - `POST /auth/register`
 - `POST /auth/login`
+- `POST /auth/forgot-password`
+- `POST /auth/reset-password`
+- `GET /auth/google` (OAuth2 Google login)
 
 ### 2. Upload ảnh đầu vào
 
@@ -334,6 +382,12 @@ Các preset hiện có:
 - `standard_wan22_ti2v`
 - `quality_hunyuan_i2v`
 
+Rule quyền truy cập preset:
+
+- `turbo_wan22_i2v_a14b` và `quality_hunyuan_i2v` chỉ dành cho tài khoản `PRO`.
+- `PRO` có `20` premium credits miễn phí mỗi ngày cho preset premium, không cộng dồn qua ngày tiếp theo.
+- Khi tạo job premium, hệ thống ưu tiên trừ phần free theo ngày trước, sau đó mới trừ ví credit.
+
 Mỗi job hiện bị trừ `10` credit. Nếu job fail hoặc bị cancel đúng luồng, hệ thống sẽ hoàn credit.
 
 ### 4. Theo dõi tiến độ realtime
@@ -353,6 +407,18 @@ Tài liệu chi tiết nằm ở [docs/jobs-sse.md](docs/jobs-sse.md).
 - `GET /jobs/:id/result`
 
 Kết quả trả về sẽ chứa signed URL để tải video và thumbnail từ S3.
+
+### 6. Billing (MVP)
+
+- `GET /billing/catalog`: lấy bảng giá top-up + gói PRO hiện tại.
+- `POST /billing/orders`: tạo đơn thanh toán `MOMO` hoặc `BANK_TRANSFER`.
+- `GET /billing/orders/me`: xem lịch sử đơn của user hiện tại.
+- `POST /billing/orders/:id/mark-paid`: API nội bộ để test đánh dấu thanh toán thành công (chỉ `ADMIN`).
+
+Lưu ý:
+
+- Luồng webhook MoMo/bank vẫn là bước tích hợp kế tiếp.
+- Hiện tại có thể dùng `mark-paid` để test luồng cộng credit và nâng `PRO` end-to-end.
 
 ## Scripts hay dùng
 
@@ -381,5 +447,7 @@ pwsh -File scripts/smoke-test-turbo.ps1 -ImagePath path\to\input.png
 
 ## Tài liệu thêm
 
+- [Auth Email + Google OAuth2 Integration Guide](docs/auth-email-oauth2.md)
 - [Jobs SSE Integration Guide](docs/jobs-sse.md)
+- [Billing Integration Guide (MoMo + payOS)](docs/billing-momo-integration.md)
 - [TurboDiffusion Wan2.2 I2V A14B Report](docs/turbodiffusion-wan22-i2v-a14b-report.md)
