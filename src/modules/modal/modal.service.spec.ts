@@ -133,6 +133,32 @@ describe('ModalService', () => {
     );
   });
 
+  it('routes the Wan 8s preset to the dedicated Wan endpoint with the longest Wan timeout', async () => {
+    http.post.mockReturnValue(
+      of({
+        status: 200,
+        headers: {},
+        data: { status: 'ok' },
+      }),
+    );
+
+    await service.generateVideo({
+      prompt: 'prompt',
+      inputImageUrl: 'https://signed.example/input.png',
+      presetId: 'standard_wan22_ti2v_8s',
+      modelName: 'wan2.2-ti2v-standard',
+    });
+
+    expect(http.post).toHaveBeenCalledWith(
+      'https://modal.example/wan',
+      expect.any(Object),
+      expect.objectContaining({
+        timeout: 60 * 60 * 1000,
+        proxy: false,
+      }),
+    );
+  });
+
   it('routes the Turbo Wan preset to the dedicated turbo endpoint with a medium timeout', async () => {
     http.post.mockReturnValue(
       of({

@@ -8,6 +8,7 @@ import {
   StorageProvider,
 } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { basename } from 'path';
 
 const prisma = new PrismaClient();
 
@@ -21,6 +22,84 @@ const SEED = {
   inputAssetSeedKey: 'seed:v2:asset:input:image',
   outputAssetSeedKey: 'seed:v2:asset:output:video',
 };
+
+const EXPLORE_SEED_POSTS = [
+  {
+    key: 'seed:v3:explore:cyberpunk',
+    caption:
+      'Neon city rain test shot #cyberpunk #cinematic - seed:v3:explore:cyberpunk',
+    title: 'Neon Rain City',
+    topic: 'scifi',
+    score: 24.5,
+    isTrending: true,
+    likeCount: 28,
+    commentCount: 9,
+    viewCount: 610,
+    ageHours: 6,
+  },
+  {
+    key: 'seed:v3:explore:anime',
+    caption: 'Anime motion clip #anime #portrait - seed:v3:explore:anime',
+    title: 'Anime Portrait Motion',
+    topic: 'anime',
+    score: 18.9,
+    isTrending: true,
+    likeCount: 15,
+    commentCount: 4,
+    viewCount: 320,
+    ageHours: 14,
+  },
+  {
+    key: 'seed:v3:explore:forest',
+    caption:
+      'Forest aerial movement, soft camera pan #landscape - seed:v3:explore:forest',
+    title: 'Forest Aerial Pan',
+    topic: 'landscape',
+    score: 13.2,
+    isTrending: false,
+    likeCount: 8,
+    commentCount: 2,
+    viewCount: 140,
+    ageHours: 30,
+  },
+  {
+    key: 'seed:v3:explore:film',
+    caption:
+      'Movie style motion test with depth #cinematic - seed:v3:explore:film',
+    title: 'Film Depth Test',
+    topic: 'cinematic',
+    score: 16.4,
+    isTrending: true,
+    likeCount: 11,
+    commentCount: 3,
+    viewCount: 210,
+    ageHours: 20,
+  },
+  {
+    key: 'seed:v3:explore:new-drop',
+    caption: 'Fresh drop just now #scifi - seed:v3:explore:new-drop',
+    title: 'Fresh Sci-fi Drop',
+    topic: 'scifi',
+    score: 10.8,
+    isTrending: false,
+    likeCount: 2,
+    commentCount: 0,
+    viewCount: 35,
+    ageHours: 2,
+  },
+];
+
+function parseCsvEnv(name: string) {
+  return (process.env[name] ?? '')
+    .split(',')
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
+function buildS3PublicUrl(bucket: string, objectKey: string) {
+  const region = process.env.AWS_REGION || 'us-east-1';
+  return `https://${bucket}.s3.${region}.amazonaws.com/${objectKey}`;
+}
 
 async function main() {
   console.log('🌱 Seeding database (idempotent)...');
@@ -70,7 +149,8 @@ async function main() {
       data: {
         userId: user.id,
         type: JobType.IMAGE_TO_VIDEO,
-        prompt: 'A futuristic cyberpunk city at night with neon lights, cinematic camera movement',
+        prompt:
+          'A futuristic cyberpunk city at night with neon lights, cinematic camera movement',
         negativePrompt: 'blurry, low quality, distorted face, artifacts',
         modelName: 'turbo-diffusion-v1',
         turboEnabled: true,
@@ -190,7 +270,10 @@ async function main() {
       },
     });
 
-    console.log('✅ Created/Upserted input assetVersion:', inputAssetVersion.id);
+    console.log(
+      '✅ Created/Upserted input assetVersion:',
+      inputAssetVersion.id,
+    );
   } else {
     console.log('✅ Reused existing input assetVersion:', inputAssetVersion.id);
   }
@@ -224,6 +307,7 @@ async function main() {
   // 7) Output AssetVersion
   const outputBucket = 'neuragen';
   const outputObjectKey = 'neuragen/jobs/seed-job/output/cyberpunk-result.mp4';
+  const outputFileUrl = buildS3PublicUrl(outputBucket, outputObjectKey);
 
   let outputAssetVersion = await prisma.assetVersion.findFirst({
     where: {
@@ -247,7 +331,7 @@ async function main() {
         storageProvider: StorageProvider.S3,
         bucket: outputBucket,
         objectKey: outputObjectKey,
-        fileUrl: null,
+        fileUrl: outputFileUrl,
         originalName: 'cyberpunk-output.mp4',
         mimeType: 'video/mp4',
         sizeBytes: 4_500_000,
@@ -268,7 +352,7 @@ async function main() {
         storageProvider: StorageProvider.S3,
         bucket: outputBucket,
         objectKey: outputObjectKey,
-        fileUrl: null,
+        fileUrl: outputFileUrl,
         originalName: 'cyberpunk-output.mp4',
         mimeType: 'video/mp4',
         sizeBytes: 4_500_000,
@@ -285,9 +369,15 @@ async function main() {
       },
     });
 
-    console.log('✅ Created/Upserted output assetVersion:', outputAssetVersion.id);
+    console.log(
+      '✅ Created/Upserted output assetVersion:',
+      outputAssetVersion.id,
+    );
   } else {
-    console.log('✅ Reused existing output assetVersion:', outputAssetVersion.id);
+    console.log(
+      '✅ Reused existing output assetVersion:',
+      outputAssetVersion.id,
+    );
   }
 
   // 8) GalleryItem cho output video
@@ -309,6 +399,152 @@ async function main() {
     console.log('✅ Created gallery item for output video');
   } else {
     console.log('✅ Reused existing gallery item:', existingGallery.id);
+  }
+
+  // 9) Optional: thêm assetVersion từ S3 object có sẵn để Explore đa dạng hơn
+  const seededExploreAssetVersions = [outputAssetVersion];
+  const configuredS3Keys = parseCsvEnv('SEED_EXPLORE_S3_KEYS');
+  const configuredFileUrls = parseCsvEnv('SEED_EXPLORE_FILE_URLS');
+  const configuredBucket =
+    process.env.SEED_EXPLORE_S3_BUCKET ||
+    process.env.AWS_S3_BUCKET ||
+    outputBucket;
+
+  for (let i = 0; i < configuredS3Keys.length; i++) {
+    const objectKey = configuredS3Keys[i];
+    const publicUrl =
+      configuredFileUrls[i] || buildS3PublicUrl(configuredBucket, objectKey);
+    const seedKey = `seed:v3:asset:explore:${i}`;
+
+    let version = await prisma.assetVersion.findFirst({
+      where: {
+        metadata: {
+          path: ['seedKey'],
+          equals: seedKey,
+        },
+      },
+    });
+
+    if (!version) {
+      const asset = await prisma.asset.create({
+        data: {
+          userId: user.id,
+          jobId: job.id,
+          type: AssetType.VIDEO,
+          role: AssetRole.OUTPUT,
+          mimeType: 'video/mp4',
+          originalName: basename(objectKey),
+        },
+      });
+
+      version = await prisma.assetVersion.create({
+        data: {
+          assetId: asset.id,
+          version: 1,
+          storageProvider: StorageProvider.S3,
+          bucket: configuredBucket,
+          objectKey,
+          fileUrl: publicUrl,
+          originalName: basename(objectKey),
+          mimeType: 'video/mp4',
+          quality: 'HD',
+          width: 1024,
+          height: 576,
+          durationMs: 6000,
+          metadata: {
+            seedKey,
+            source: 'seed',
+            kind: 'explore-video',
+            fromEnv: true,
+          },
+        },
+      });
+      console.log('✅ Added explore assetVersion from S3 key:', objectKey);
+    }
+
+    seededExploreAssetVersions.push(version);
+  }
+
+  // 10) Seed vài post + explore item để trang Explore có dữ liệu ngay
+  for (let i = 0; i < EXPLORE_SEED_POSTS.length; i++) {
+    const seedPost = EXPLORE_SEED_POSTS[i];
+    const selectedVersion =
+      seededExploreAssetVersions[i % seededExploreAssetVersions.length];
+    const createdAt = new Date(Date.now() - seedPost.ageHours * 60 * 60 * 1000);
+
+    let post = await prisma.post.findFirst({
+      where: {
+        userId: user.id,
+        caption: seedPost.caption,
+      },
+    });
+
+    if (!post) {
+      post = await prisma.post.create({
+        data: {
+          userId: user.id,
+          assetVersionId: selectedVersion.id,
+          caption: seedPost.caption,
+          isPublic: true,
+          likeCount: seedPost.likeCount,
+          commentCount: seedPost.commentCount,
+          viewCount: seedPost.viewCount,
+          createdAt,
+        },
+      });
+      console.log(`✅ Created explore post: ${seedPost.key}`);
+    } else {
+      post = await prisma.post.update({
+        where: { id: post.id },
+        data: {
+          assetVersionId: selectedVersion.id,
+          isPublic: true,
+          likeCount: seedPost.likeCount,
+          commentCount: seedPost.commentCount,
+          viewCount: seedPost.viewCount,
+        },
+      });
+      console.log(`✅ Reused explore post: ${seedPost.key}`);
+    }
+
+    await prisma.exploreItem.upsert({
+      where: {
+        postId: post.id,
+      },
+      update: {
+        assetVersionId: selectedVersion.id,
+        title: seedPost.title,
+        topic: seedPost.topic,
+        isTrending: seedPost.isTrending,
+        score: seedPost.score,
+      },
+      create: {
+        postId: post.id,
+        assetVersionId: selectedVersion.id,
+        title: seedPost.title,
+        topic: seedPost.topic,
+        isTrending: seedPost.isTrending,
+        score: seedPost.score,
+        createdAt,
+      },
+    });
+
+    const exploreGalleryItem = await prisma.galleryItem.findFirst({
+      where: {
+        userId: user.id,
+        assetVersionId: selectedVersion.id,
+      },
+    });
+
+    if (!exploreGalleryItem) {
+      await prisma.galleryItem.create({
+        data: {
+          userId: user.id,
+          assetVersionId: selectedVersion.id,
+          isPublic: true,
+        },
+      });
+    }
   }
 
   console.log('🎉 Seed completed (idempotent).');

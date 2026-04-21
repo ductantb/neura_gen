@@ -357,6 +357,98 @@ describe('JobsService', () => {
     );
   });
 
+  it('stores the 8s Wan preset metadata when selected explicitly', async () => {
+    const inputAsset = {
+      id: 'asset-1',
+      userId: 'user-1',
+      role: 'INPUT',
+      versions: [{ objectKey: 'input.png' }],
+    };
+    const createdJob = {
+      id: 'job-wan-8s',
+      userId: 'user-1',
+      creditCost: 14,
+      provider: 'modal',
+      modelName: 'wan2.2-ti2v-standard',
+    };
+    const createJob = jest.fn().mockResolvedValue(createdJob);
+
+    prisma.asset.findUnique.mockResolvedValue(inputAsset);
+    prisma.generateJob.update.mockResolvedValue({
+      id: 'job-wan-8s',
+      status: JobStatus.QUEUED,
+      progress: 1,
+      errorMessage: null,
+      startedAt: null,
+      completedAt: null,
+      failedAt: null,
+      updatedAt: now,
+    });
+    prisma.$transaction
+      .mockImplementationOnce(async (callback: any) =>
+        callback({
+          user: {
+            findUnique: prisma.user.findUnique,
+            update: prisma.user.update,
+          },
+          userDailyUsage: {
+            upsert: prisma.userDailyUsage.upsert,
+            update: prisma.userDailyUsage.update,
+          },
+          userCredit: {
+            findUnique: jest.fn().mockResolvedValue({ userId: 'user-1', balance: 100 }),
+            update: prisma.userCredit.update,
+          },
+          creditTransaction: {
+            create: prisma.creditTransaction.create,
+          },
+          generateJob: {
+            create: createJob,
+          },
+        }),
+      )
+      .mockImplementationOnce(async (callback: any) =>
+        callback({
+          generateJob: {
+            update: prisma.generateJob.update,
+          },
+          jobLog: {
+            create: prisma.jobLog.create,
+          },
+        }),
+      );
+    videoQueue.add.mockResolvedValue({ id: 'job-wan-8s' });
+
+    const result = await service.createVideoJob('user-1', {
+      inputAssetId: 'asset-1',
+      prompt: 'prompt',
+      presetId: 'standard_wan22_ti2v_8s',
+    });
+
+    expect(createJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          provider: 'modal',
+          modelName: 'wan2.2-ti2v-standard',
+          turboEnabled: false,
+          creditCost: 14,
+          extraConfig: expect.objectContaining({
+            presetId: 'standard_wan22_ti2v_8s',
+            workflow: 'TI2V',
+          }),
+        }),
+      }),
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        provider: 'modal',
+        modelName: 'wan2.2-ti2v-standard',
+        presetId: 'standard_wan22_ti2v_8s',
+        estimatedDurationSeconds: 660,
+      }),
+    );
+  });
+
   it('charges the higher quality preset cost only when Hunyuan is selected explicitly', async () => {
     const inputAsset = {
       id: 'asset-1',

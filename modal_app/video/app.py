@@ -15,6 +15,7 @@ LTX_PREVIEW_MODEL_NAME = "ltx-video-i2v-preview"
 LTX_PREVIEW_PRESET_ID = "preview_ltx_i2v"
 WAN_STANDARD_MODEL_NAME = "wan2.2-ti2v-standard"
 WAN_STANDARD_PRESET_ID = "standard_wan22_ti2v"
+WAN_STANDARD_8S_PRESET_ID = "standard_wan22_ti2v_8s"
 HUNYUAN_QUALITY_MODEL_NAME = "hunyuan-video-i2v-quality"
 HUNYUAN_QUALITY_PRESET_ID = "quality_hunyuan_i2v"
 LTX_TARGET_WIDTH = 832
@@ -26,7 +27,8 @@ LTX_VIDEO_FPS = 24
 # Tuned for L40S: keep 720p-ish quality while avoiding the long runtimes
 # and timeout risk of the heavier 121-frame / 50-step configuration.
 WAN_MAX_AREA = 704 * 1280
-WAN_NUM_FRAMES = 121
+WAN_NUM_FRAMES_5S = 121
+WAN_NUM_FRAMES_8S = 193
 WAN_NUM_INFERENCE_STEPS = 40
 WAN_GUIDANCE_SCALE = 4.5
 WAN_VIDEO_FPS = 24
@@ -164,7 +166,11 @@ def _validate_wan_request(
             f"Unsupported modelName for Wan TI2V deployment: {model_name}"
         )
 
-    if preset_id and preset_id != WAN_STANDARD_PRESET_ID:
+    allowed_preset_ids = {
+        WAN_STANDARD_PRESET_ID,
+        WAN_STANDARD_8S_PRESET_ID,
+    }
+    if preset_id and preset_id not in allowed_preset_ids:
         raise ValueError(
             f"Unsupported presetId for Wan TI2V deployment: {preset_id}"
         )
@@ -240,17 +246,34 @@ def _build_hunyuan_negative_prompt(negative_prompt: str | None) -> str:
     return ", ".join(part for part in parts if part)
 
 
-def _resolve_wan_profile():
-    return {
-        "max_area": WAN_MAX_AREA,
-        "num_frames": WAN_NUM_FRAMES,
-        "num_inference_steps": WAN_NUM_INFERENCE_STEPS,
-        "guidance_scale": WAN_GUIDANCE_SCALE,
-        "fps": WAN_VIDEO_FPS,
-        "message": "Wan 2.2 TI2V standard generated successfully",
-        "preset_id": WAN_STANDARD_PRESET_ID,
-        "debug_version": "modal_wan22_ti2v_standard_v2_5s",
-    }
+def _resolve_wan_profile(preset_id: str | None):
+    resolved_preset_id = preset_id or WAN_STANDARD_PRESET_ID
+
+    if resolved_preset_id == WAN_STANDARD_8S_PRESET_ID:
+        return {
+            "max_area": WAN_MAX_AREA,
+            "num_frames": WAN_NUM_FRAMES_8S,
+            "num_inference_steps": WAN_NUM_INFERENCE_STEPS,
+            "guidance_scale": WAN_GUIDANCE_SCALE,
+            "fps": WAN_VIDEO_FPS,
+            "message": "Wan 2.2 TI2V standard (8s) generated successfully",
+            "preset_id": WAN_STANDARD_8S_PRESET_ID,
+            "debug_version": "modal_wan22_ti2v_standard_v3_8s",
+        }
+
+    if resolved_preset_id == WAN_STANDARD_PRESET_ID:
+        return {
+            "max_area": WAN_MAX_AREA,
+            "num_frames": WAN_NUM_FRAMES_5S,
+            "num_inference_steps": WAN_NUM_INFERENCE_STEPS,
+            "guidance_scale": WAN_GUIDANCE_SCALE,
+            "fps": WAN_VIDEO_FPS,
+            "message": "Wan 2.2 TI2V standard generated successfully",
+            "preset_id": WAN_STANDARD_PRESET_ID,
+            "debug_version": "modal_wan22_ti2v_standard_v3_5s",
+        }
+
+    raise ValueError(f"Unsupported presetId for Wan TI2V deployment: {resolved_preset_id}")
 
 
 def _resolve_hunyuan_profile():
@@ -534,7 +557,7 @@ def generate_video(req: dict):
 
 @app.function(
     gpu="L40S",
-    timeout=60 * 45,
+    timeout=60 * 60,
     scaledown_window=10 * 60,
     volumes={MODEL_CACHE_DIR: cache_volume},
 )
@@ -608,7 +631,7 @@ def _generate_wan_video_response(
 
     _validate_wan_request(input_image_url, model_name, preset_id, workflow)
 
-    profile = _resolve_wan_profile()
+    profile = _resolve_wan_profile(preset_id)
     pipe = _load_wan_pipeline()
     image, height, width = _load_wan_input_image(
         input_image_url,
@@ -739,7 +762,7 @@ def _generate_hunyuan_video_response(
 
 @app.function(
     gpu="L40S",
-    timeout=60 * 45,
+    timeout=60 * 60,
     scaledown_window=10 * 60,
     volumes={MODEL_CACHE_DIR: cache_volume},
 )

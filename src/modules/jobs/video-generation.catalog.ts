@@ -7,6 +7,7 @@ export type VideoGenerationPresetId =
   | 'preview_ltx_i2v'
   | 'turbo_wan22_i2v_a14b'
   | 'standard_wan22_ti2v'
+  | 'standard_wan22_ti2v_8s'
   | 'quality_hunyuan_i2v';
 
 export const PRO_ONLY_VIDEO_PRESET_IDS: ReadonlyArray<VideoGenerationPresetId> = [
@@ -70,6 +71,18 @@ export const VIDEO_GENERATION_PRESETS: Record<
     creditCost: 10,
     estimatedDurationSeconds: 420,
     requiresExplicitSelection: false,
+  },
+  standard_wan22_ti2v_8s: {
+    id: 'standard_wan22_ti2v_8s',
+    label: 'Wan 2.2 Standard TI2V (8s)',
+    tier: 'standard',
+    provider: 'modal',
+    workflow: 'TI2V',
+    modelName: 'wan2.2-ti2v-standard',
+    turboEnabled: false,
+    creditCost: 14,
+    estimatedDurationSeconds: 660,
+    requiresExplicitSelection: true,
   },
   quality_hunyuan_i2v: {
     id: 'quality_hunyuan_i2v',
