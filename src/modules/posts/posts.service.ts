@@ -7,12 +7,62 @@ import {
 import { CreatePostDto } from './dto/create-post.dto';
 import { UpdatePostDto } from './dto/update-post.dto';
 import { PrismaService } from 'src/infra/prisma/prisma.service';
-import { UserRole } from '@prisma/client';
+import { AssetRole, Prisma, UserRole } from '@prisma/client';
 import Redis from 'ioredis';
 import { createHash } from 'crypto';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { REDIS_CLIENT } from 'src/common/constants';
 import { ExploreService } from '../explore/explore.service';
+
+const POST_WITH_MEDIA_INCLUDE = {
+  user: {
+    select: {
+      id: true,
+      username: true,
+    },
+  },
+  assetVersion: {
+    select: {
+      id: true,
+      fileUrl: true,
+      metadata: true,
+      mimeType: true,
+      asset: {
+        select: {
+          type: true,
+          job: {
+            select: {
+              assets: {
+                where: {
+                  role: AssetRole.THUMBNAIL,
+                },
+                orderBy: {
+                  createdAt: 'desc',
+                },
+                take: 1,
+                select: {
+                  versions: {
+                    orderBy: {
+                      version: 'desc',
+                    },
+                    take: 1,
+                    select: {
+                      fileUrl: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+} satisfies Prisma.PostInclude;
+
+type PostWithMediaRelations = Prisma.PostGetPayload<{
+  include: typeof POST_WITH_MEDIA_INCLUDE;
+}>;
 
 @Injectable()
 export class PostsService {
@@ -31,32 +81,24 @@ export class PostsService {
     });
 
     await this.exploreService.syncPost(post.id);
-    return post;
+    return this.findOne(post.id);
   }
 
   findAll() {
-    return this.prismaService.post.findMany();
+    return this.prismaService.post
+      .findMany({
+        include: POST_WITH_MEDIA_INCLUDE,
+      })
+      .then((posts) => posts.map((post) => this.serializePost(post)));
   }
 
   findOne(id: string) {
-    return this.prismaService.post.findUnique({
-      where: { id },
-      include: {
-        user: {
-          select: {
-            id: true,
-            username: true,
-          },
-        },
-        assetVersion: {
-          select: {
-            id: true,
-            fileUrl: true,
-            metadata: true,
-          },
-        },
-      },
-    });
+    return this.prismaService.post
+      .findUnique({
+        where: { id },
+        include: POST_WITH_MEDIA_INCLUDE,
+      })
+      .then((post) => this.serializePost(post));
   }
 
   async update(
@@ -79,7 +121,7 @@ export class PostsService {
     });
 
     await this.exploreService.syncPost(updatedPost.id);
-    return updatedPost;
+    return this.findOne(updatedPost.id);
   }
 
   async remove(id: string, user: { sub: string; role: UserRole }) {
@@ -161,5 +203,21 @@ export class PostsService {
     ) AS v
     WHERE p.id = v.id;
   `;
+  }
+
+  private serializePost(post: PostWithMediaRelations | null) {
+    if (!post) return null;
+
+    const thumbnailUrl =
+      post.assetVersion.asset.job?.assets[0]?.versions[0]?.fileUrl ??
+      (post.assetVersion.asset.type === 'IMAGE' ? post.assetVersion.fileUrl : null);
+    const videoUrl =
+      post.assetVersion.asset.type === 'VIDEO' ? post.assetVersion.fileUrl : null;
+
+    return {
+      ...post,
+      thumbnailUrl,
+      videoUrl,
+    };
   }
 }

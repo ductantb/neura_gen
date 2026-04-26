@@ -258,7 +258,9 @@ describe('JobsService', () => {
           turboEnabled: false,
           extraConfig: expect.objectContaining({
             presetId: 'standard_wan22_ti2v',
-            workflow: 'TI2V',
+            workflow: 'I2V',
+            presetWorkflow: 'TI2V',
+            inputMode: 'I2V',
           }),
         }),
       }),
@@ -345,7 +347,9 @@ describe('JobsService', () => {
           modelName: 'wan2.2-ti2v-standard',
           extraConfig: expect.objectContaining({
             presetId: 'standard_wan22_ti2v',
-            workflow: 'TI2V',
+            workflow: 'I2V',
+            presetWorkflow: 'TI2V',
+            inputMode: 'I2V',
           }),
         }),
       }),
@@ -422,7 +426,8 @@ describe('JobsService', () => {
         data: expect.objectContaining({
           extraConfig: expect.objectContaining({
             presetId: 'standard_wan22_ti2v',
-            workflow: 'TI2V',
+            workflow: 'T2V',
+            presetWorkflow: 'TI2V',
             inputMode: 'T2V',
           }),
         }),
@@ -431,6 +436,87 @@ describe('JobsService', () => {
     expect(result).toEqual(
       expect.objectContaining({
         presetId: 'standard_wan22_ti2v',
+      }),
+    );
+  });
+
+  it('allows creating the Wan TI2V 8s preset without inputAssetId for text-only generation', async () => {
+    const createdJob = {
+      id: 'job-text-only-8s',
+      userId: 'user-1',
+      creditCost: 14,
+      provider: 'modal',
+      modelName: 'wan2.2-ti2v-standard',
+    };
+    const createJob = jest.fn().mockResolvedValue(createdJob);
+
+    prisma.generateJob.update.mockResolvedValue({
+      id: 'job-text-only-8s',
+      status: JobStatus.QUEUED,
+      progress: 1,
+      errorMessage: null,
+      startedAt: null,
+      completedAt: null,
+      failedAt: null,
+      updatedAt: now,
+    });
+    prisma.$transaction
+      .mockImplementationOnce(async (callback: any) =>
+        callback({
+          user: {
+            findUnique: prisma.user.findUnique,
+            update: prisma.user.update,
+          },
+          userDailyUsage: {
+            upsert: prisma.userDailyUsage.upsert,
+            update: prisma.userDailyUsage.update,
+          },
+          userCredit: {
+            findUnique: jest.fn().mockResolvedValue({ userId: 'user-1', balance: 100 }),
+            update: prisma.userCredit.update,
+          },
+          creditTransaction: {
+            create: prisma.creditTransaction.create,
+          },
+          generateJob: {
+            create: createJob,
+          },
+        }),
+      )
+      .mockImplementationOnce(async (callback: any) =>
+        callback({
+          generateJob: {
+            update: prisma.generateJob.update,
+          },
+          jobLog: {
+            create: prisma.jobLog.create,
+          },
+        }),
+      );
+    videoQueue.add.mockResolvedValue({ id: 'job-text-only-8s' });
+
+    const result = await service.createVideoJob('user-1', {
+      prompt: 'prompt',
+      presetId: 'standard_wan22_ti2v_8s',
+    });
+
+    expect(prisma.asset.findUnique).not.toHaveBeenCalled();
+    expect(createJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          creditCost: 14,
+          extraConfig: expect.objectContaining({
+            presetId: 'standard_wan22_ti2v_8s',
+            workflow: 'T2V',
+            presetWorkflow: 'TI2V',
+            inputMode: 'T2V',
+          }),
+        }),
+      }),
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        presetId: 'standard_wan22_ti2v_8s',
       }),
     );
   });
@@ -606,7 +692,9 @@ describe('JobsService', () => {
           creditCost: 14,
           extraConfig: expect.objectContaining({
             presetId: 'standard_wan22_ti2v_8s',
-            workflow: 'TI2V',
+            workflow: 'I2V',
+            presetWorkflow: 'TI2V',
+            inputMode: 'I2V',
           }),
         }),
       }),
@@ -1013,7 +1101,8 @@ describe('JobsService', () => {
       modelName: 'wan2.2-ti2v-standard',
       extraConfig: {
         presetId: 'standard_wan22_ti2v',
-        workflow: 'TI2V',
+        workflow: 'T2V',
+        presetWorkflow: 'TI2V',
       },
       createdAt: now,
       updatedAt: now,
@@ -1039,7 +1128,7 @@ describe('JobsService', () => {
         provider: 'modal',
         modelName: 'wan2.2-ti2v-standard',
         presetId: 'standard_wan22_ti2v',
-        workflow: 'TI2V',
+        workflow: 'T2V',
         logs: [
           {
             jobId: 'job-stream',

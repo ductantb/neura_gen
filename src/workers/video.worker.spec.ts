@@ -190,7 +190,7 @@ describe('VideoWorker', () => {
     );
   });
 
-  it('supports TI2V text-only jobs without resolving input image URL', async () => {
+  it('supports T2V text-only jobs without resolving input image URL', async () => {
     prisma.generateJob.findUnique.mockResolvedValue({
       id: 'job-text-only',
       userId: 'user-1',
@@ -203,7 +203,8 @@ describe('VideoWorker', () => {
       progress: 1,
       extraConfig: {
         presetId: 'standard_wan22_ti2v',
-        workflow: 'TI2V',
+        workflow: 'T2V',
+        presetWorkflow: 'TI2V',
         includeBackgroundAudio: false,
       },
     });
@@ -221,8 +222,63 @@ describe('VideoWorker', () => {
     expect(storageService.getDownloadSignedUrl).not.toHaveBeenCalled();
     expect(modal.generateVideo).toHaveBeenCalledWith(
       expect.objectContaining({
-        workflow: 'TI2V',
+        workflow: 'T2V',
         inputImageUrl: undefined,
+      }),
+    );
+  });
+
+  it('fails immediately without retrying when Modal reports a non-retryable billing limit error', async () => {
+    const billingError = Object.assign(
+      new Error(
+        'Modal request failed with status 429: modal-http: Webhook failed: workspace billing cycle spend limit reached',
+      ),
+      {
+        statusCode: 429,
+        retryable: false,
+      },
+    );
+    modal.generateVideo.mockRejectedValue(billingError);
+    prisma.creditTransaction.findFirst.mockResolvedValue(null);
+    prisma.$transaction.mockImplementation(async (callback: any) =>
+      callback({
+        userCredit: {
+          update: prisma.userCredit.update,
+        },
+        creditTransaction: {
+          create: prisma.creditTransaction.create,
+        },
+      }),
+    );
+
+    await expect(
+      worker['handle']({
+        data: { jobId: 'job-1' },
+        attemptsMade: 0,
+        opts: { attempts: 3 },
+      } as any),
+    ).resolves.toBeUndefined();
+
+    expect(prisma.userCredit.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: 'user-1' },
+        data: {
+          balance: {
+            increment: 10,
+          },
+        },
+      }),
+    );
+    expect(jobEvents.emitLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobId: 'job-1',
+        message: expect.stringContaining('failed permanently'),
+      }),
+    );
+    expect(jobEvents.emitLog).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobId: 'job-1',
+        message: expect.stringContaining('retrying'),
       }),
     );
   });

@@ -26,10 +26,10 @@ LTX_GUIDANCE_SCALE = 5.5
 LTX_VIDEO_FPS = 24
 # Tuned for L40S: keep 720p-ish quality while avoiding the long runtimes
 # and timeout risk of the heavier 121-frame / 50-step configuration.
-WAN_MAX_AREA = 704 * 1280
-WAN_NUM_FRAMES_5S = 121
-WAN_NUM_FRAMES_8S = 193
-WAN_NUM_INFERENCE_STEPS = 40
+WAN_MAX_AREA = 480 * 832
+WAN_NUM_FRAMES_5S = 81
+WAN_NUM_FRAMES_8S = 121
+WAN_NUM_INFERENCE_STEPS = 32
 WAN_GUIDANCE_SCALE = 4.5
 WAN_VIDEO_FPS = 24
 HUNYUAN_LANDSCAPE_WIDTH = 960
@@ -92,7 +92,7 @@ image = (
     .pip_install(
         "torch==2.6.0",
         "torchvision==0.21.0",
-        "git+https://github.com/huggingface/diffusers.git",
+        "git+https://github.com/huggingface/diffusers.git@9d313fc718c8ace9a35f07dad9d5ce8018f8d216",
         "transformers==4.48.3",
         "accelerate>=1.1.0",
         "huggingface_hub==0.34.4",
@@ -328,10 +328,16 @@ def _load_wan_t2v_pipeline():
     _release_wan_i2v_pipeline()
 
     import torch
-    from diffusers import WanPipeline
+    from diffusers import AutoencoderKLWan, WanPipeline
 
+    vae = AutoencoderKLWan.from_pretrained(
+        WAN_MODEL_ID,
+        subfolder="vae",
+        torch_dtype=torch.float32,
+    )
     pipe = WanPipeline.from_pretrained(
         WAN_MODEL_ID,
+        vae=vae,
         torch_dtype=torch.bfloat16,
     )
     pipe.to("cuda")
@@ -349,10 +355,16 @@ def _load_wan_i2v_pipeline():
     _release_wan_t2v_pipeline()
 
     import torch
-    from diffusers import WanImageToVideoPipeline
+    from diffusers import AutoencoderKLWan, WanImageToVideoPipeline
 
+    vae = AutoencoderKLWan.from_pretrained(
+        WAN_MODEL_ID,
+        subfolder="vae",
+        torch_dtype=torch.float32,
+    )
     pipe = WanImageToVideoPipeline.from_pretrained(
         WAN_MODEL_ID,
+        vae=vae,
         torch_dtype=torch.bfloat16,
     )
     pipe.to("cuda")
@@ -725,7 +737,7 @@ def _generate_wan_video_response(
         pipe = _load_wan_t2v_pipeline()
         height, width = _resolve_wan_text_dimensions(pipe, profile["max_area"])
 
-    generator = torch.Generator(device="cuda").manual_seed(_seed_from_job(job_id))
+    generator = torch.Generator(device="cpu").manual_seed(_seed_from_job(job_id))
 
     generation_kwargs = {
         "prompt": _build_wan_prompt(prompt, has_input_image),

@@ -158,7 +158,7 @@ export class VideoWorker implements OnModuleDestroy {
       });
 
       // Resolve optional input asset (image). TI2V jobs can run without it.
-      const workflow = this.extractExtraConfigString(job.extraConfig, 'workflow');
+      const workflow = this.resolveExecutionWorkflow(job.extraConfig);
       const presetId = this.extractExtraConfigString(job.extraConfig, 'presetId');
       const requiresInputImage = workflow === 'I2V';
       const inputAsset = await this.resolveInputAsset(job);
@@ -367,7 +367,8 @@ export class VideoWorker implements OnModuleDestroy {
 
       // Retry logic
       const maxAttempts = bullJob.opts.attempts ?? 1;
-      const isFinalAttempt = bullJob.attemptsMade + 1 >= maxAttempts;
+      const isRetryable = this.isRetryableProviderError(err);
+      const isFinalAttempt = !isRetryable || bullJob.attemptsMade + 1 >= maxAttempts;
 
       if (!isFinalAttempt) {
         await setStatus(JobStatus.QUEUED, Math.max(currentProgress, 1), {
@@ -394,6 +395,10 @@ export class VideoWorker implements OnModuleDestroy {
       await this.refundFailedJob(job, message);
 
       await this.log(jobId, `Job failed permanently: ${message}`);
+
+      if (!isRetryable) {
+        return;
+      }
 
       throw err;
     }
@@ -446,6 +451,44 @@ export class VideoWorker implements OnModuleDestroy {
 
     const value = (extraConfig as Record<string, unknown>)[key];
     return typeof value === 'boolean' ? value : null;
+  }
+
+  private resolveExecutionWorkflow(
+    extraConfig: Prisma.JsonValue | null,
+  ): string | null {
+    const workflow = this.extractExtraConfigString(extraConfig, 'workflow');
+    if (workflow) {
+      return workflow;
+    }
+
+    const inputMode = this.extractExtraConfigString(extraConfig, 'inputMode');
+    if (inputMode) {
+      return inputMode;
+    }
+
+    return this.extractExtraConfigString(extraConfig, 'presetWorkflow');
+  }
+
+  private isRetryableProviderError(error: unknown): boolean {
+    if (!error || typeof error !== 'object') {
+      return true;
+    }
+
+    const maybeRetryable = (error as { retryable?: unknown }).retryable;
+    if (typeof maybeRetryable === 'boolean') {
+      return maybeRetryable;
+    }
+
+    const maybeStatusCode = (error as { statusCode?: unknown }).statusCode;
+    if (typeof maybeStatusCode !== 'number') {
+      return true;
+    }
+
+    if (maybeStatusCode === 408 || maybeStatusCode === 425 || maybeStatusCode >= 500) {
+      return true;
+    }
+
+    return false;
   }
 
   // resolve input asset

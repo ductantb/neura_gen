@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { HttpService } from '@nestjs/axios';
 import { ModalService } from './modal.service';
-import { of } from 'rxjs';
+import { of, throwError } from 'rxjs';
 
 describe('ModalService', () => {
   let service: ModalService;
@@ -94,7 +94,7 @@ describe('ModalService', () => {
     );
   });
 
-  it('allows Wan preset payload without input image URL (text-only TI2V mode)', async () => {
+  it('allows Wan preset payload without input image URL (text-only T2V mode)', async () => {
     http.post.mockReturnValue(
       of({
         status: 200,
@@ -107,20 +107,46 @@ describe('ModalService', () => {
       prompt: 'prompt',
       presetId: 'standard_wan22_ti2v',
       modelName: 'wan2.2-ti2v-standard',
-      workflow: 'TI2V',
+      workflow: 'T2V',
     });
 
     expect(http.post).toHaveBeenCalledWith(
       'https://modal.example/wan',
       expect.objectContaining({
         prompt: 'prompt',
-        workflow: 'TI2V',
+        workflow: 'T2V',
       }),
       expect.objectContaining({
         timeout: 45 * 60 * 1000,
         proxy: false,
       }),
     );
+  });
+
+  it('surfaces non-retryable billing-limit responses with a rich error message', async () => {
+    http.post.mockReturnValue(
+      throwError(() => ({
+        isAxiosError: true,
+        message: 'Request failed with status code 429',
+        response: {
+          status: 429,
+          data: 'modal-http: Webhook failed: workspace billing cycle spend limit reached',
+        },
+      })),
+    );
+
+    await expect(
+      service.generateVideo({
+        prompt: 'prompt',
+        presetId: 'standard_wan22_ti2v',
+        modelName: 'wan2.2-ti2v-standard',
+        workflow: 'T2V',
+      }),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining('billing cycle spend limit reached'),
+      statusCode: 429,
+      retryable: false,
+    });
   });
 
   it('fails fast when a requested provider route is not configured', async () => {
@@ -181,6 +207,36 @@ describe('ModalService', () => {
     expect(http.post).toHaveBeenCalledWith(
       'https://modal.example/wan',
       expect.any(Object),
+      expect.objectContaining({
+        timeout: 60 * 60 * 1000,
+        proxy: false,
+      }),
+    );
+  });
+
+  it('allows the Wan 8s preset payload without input image URL (text-only T2V mode)', async () => {
+    http.post.mockReturnValue(
+      of({
+        status: 200,
+        headers: {},
+        data: { status: 'ok' },
+      }),
+    );
+
+    await service.generateVideo({
+      prompt: 'prompt',
+      presetId: 'standard_wan22_ti2v_8s',
+      modelName: 'wan2.2-ti2v-standard',
+      workflow: 'T2V',
+    });
+
+    expect(http.post).toHaveBeenCalledWith(
+      'https://modal.example/wan',
+      expect.objectContaining({
+        prompt: 'prompt',
+        presetId: 'standard_wan22_ti2v_8s',
+        workflow: 'T2V',
+      }),
       expect.objectContaining({
         timeout: 60 * 60 * 1000,
         proxy: false,
