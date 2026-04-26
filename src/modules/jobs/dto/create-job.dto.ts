@@ -1,8 +1,9 @@
-import { IsOptional, IsString, IsUUID } from 'class-validator';
+import { IsBoolean, IsOptional, IsString, IsUUID } from 'class-validator';
 
 export class CreateVideoJobDto {
+  @IsOptional()
   @IsUUID()
-  inputAssetId: string;
+  inputAssetId?: string;
 
   @IsString()
   prompt: string;
@@ -14,4 +15,8 @@ export class CreateVideoJobDto {
   @IsOptional()
   @IsString()
   presetId?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  includeBackgroundAudio?: boolean;
 }

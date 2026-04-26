@@ -228,7 +228,7 @@ export class ModalService {
 export interface GenerateVideoInput {
   prompt: string;
   negativePrompt?: string;
-  inputImageUrl: string;
+  inputImageUrl?: string;
   jobId?: string;
   provider?: string;
   modelName?: string;

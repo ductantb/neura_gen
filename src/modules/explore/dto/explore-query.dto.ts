@@ -23,13 +23,13 @@ export class ExploreQueryDto {
 
   @ApiPropertyOptional({
     example: 'trending',
-    enum: ['trending', 'new', 'top', 'for_you'],
+    enum: ['trending', 'new', 'top'],
     description:
-      'Chế độ feed. trending: bài đang hot, new: bài mới, top: điểm cao toàn cục, for_you: cá nhân hóa',
+      'Chế độ feed public. trending: bài đang hot, new: bài mới, top: điểm cao toàn cục',
   })
   @IsOptional()
-  @IsIn(['trending', 'new', 'top', 'for_you'])
-  mode?: 'trending' | 'new' | 'top' | 'for_you';
+  @IsIn(['trending', 'new', 'top'])
+  mode?: 'trending' | 'new' | 'top';
 
   @ApiPropertyOptional({ example: 'score' })
   @IsOptional()

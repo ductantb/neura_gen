@@ -189,4 +189,41 @@ describe('VideoWorker', () => {
       }),
     );
   });
+
+  it('supports TI2V text-only jobs without resolving input image URL', async () => {
+    prisma.generateJob.findUnique.mockResolvedValue({
+      id: 'job-text-only',
+      userId: 'user-1',
+      prompt: 'prompt',
+      negativePrompt: null,
+      provider: 'modal',
+      modelName: 'wan2.2-ti2v-standard',
+      creditCost: 10,
+      status: JobStatus.QUEUED,
+      progress: 1,
+      extraConfig: {
+        presetId: 'standard_wan22_ti2v',
+        workflow: 'TI2V',
+        includeBackgroundAudio: false,
+      },
+    });
+    prisma.asset.findFirst.mockResolvedValue(null);
+    modal.generateVideo.mockRejectedValue(new Error('provider timeout'));
+
+    await expect(
+      worker['handle']({
+        data: { jobId: 'job-text-only' },
+        attemptsMade: 0,
+        opts: { attempts: 2 },
+      } as any),
+    ).rejects.toThrow('provider timeout');
+
+    expect(storageService.getDownloadSignedUrl).not.toHaveBeenCalled();
+    expect(modal.generateVideo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workflow: 'TI2V',
+        inputImageUrl: undefined,
+      }),
+    );
+  });
 });

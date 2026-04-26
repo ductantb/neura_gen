@@ -94,6 +94,35 @@ describe('ModalService', () => {
     );
   });
 
+  it('allows Wan preset payload without input image URL (text-only TI2V mode)', async () => {
+    http.post.mockReturnValue(
+      of({
+        status: 200,
+        headers: {},
+        data: { status: 'ok' },
+      }),
+    );
+
+    await service.generateVideo({
+      prompt: 'prompt',
+      presetId: 'standard_wan22_ti2v',
+      modelName: 'wan2.2-ti2v-standard',
+      workflow: 'TI2V',
+    });
+
+    expect(http.post).toHaveBeenCalledWith(
+      'https://modal.example/wan',
+      expect.objectContaining({
+        prompt: 'prompt',
+        workflow: 'TI2V',
+      }),
+      expect.objectContaining({
+        timeout: 45 * 60 * 1000,
+        proxy: false,
+      }),
+    );
+  });
+
   it('fails fast when a requested provider route is not configured', async () => {
     delete process.env.MODAL_GENERATE_VIDEO_HUNYUAN_URL;
 

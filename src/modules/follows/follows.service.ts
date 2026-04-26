@@ -3,18 +3,49 @@ import { CreateFollowDto } from './dto/create-follow.dto';
 import { PrismaService } from 'src/infra/prisma/prisma.service';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
 import { UserRole } from '@prisma/client';
+import { ExploreService } from '../explore/explore.service';
 
 @Injectable()
 export class FollowsService {
-  constructor(private readonly prismaService: PrismaService) {}
+  constructor(
+    private readonly prismaService: PrismaService,
+    private readonly exploreService: ExploreService,
+  ) {}
 
-  create(userId: string, createFollowDto: CreateFollowDto) {
-    return this.prismaService.follow.create({
+  async create(userId: string, createFollowDto: CreateFollowDto) {
+    const follow = await this.prismaService.follow.create({
       data: {
-        ...createFollowDto,
+        followingId: createFollowDto.followingId,
         followerId: userId,
       },
     });
+
+    if (createFollowDto.sourcePostId) {
+      const sourcePost = await this.prismaService.post.findUnique({
+        where: { id: createFollowDto.sourcePostId },
+        select: {
+          id: true,
+          userId: true,
+          isPublic: true,
+        },
+      });
+
+      if (
+        sourcePost &&
+        sourcePost.isPublic &&
+        sourcePost.userId === createFollowDto.followingId
+      ) {
+        await this.exploreService.recordEvent(userId, {
+          postId: sourcePost.id,
+          eventType: 'FOLLOW_CREATOR',
+          metadata: {
+            source: 'follow_action',
+          },
+        });
+      }
+    }
+
+    return follow;
   }
 
   async findFollowers(userId: string, { cursor, take }: PaginationDto) {
