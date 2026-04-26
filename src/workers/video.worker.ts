@@ -13,6 +13,7 @@ import { PrismaService } from 'src/infra/prisma/prisma.service';
 import { JobEventsService } from 'src/modules/jobs/job-events.service';
 import { ModalService } from 'src/modules/modal/modal.service';
 import { generateThumbnailFromVideoBuffer } from 'src/utils/video-thumbnail.util';
+import { addBackgroundAudioToVideoBuffer } from 'src/utils/video-background-audio.util';
 
 // Custom error to distinguish cancellation from normal errors
 class JobCancelledError extends Error {
@@ -156,25 +157,32 @@ export class VideoWorker implements OnModuleDestroy {
         errorMessage: null,
       });
 
-      // Resolve input asset (image)
+      // Resolve optional input asset (image). TI2V jobs can run without it.
+      const workflow = this.extractExtraConfigString(job.extraConfig, 'workflow');
+      const presetId = this.extractExtraConfigString(job.extraConfig, 'presetId');
+      const requiresInputImage = workflow === 'I2V';
       const inputAsset = await this.resolveInputAsset(job);
-      if (!inputAsset) {
-        throw new Error('Input asset not found for job');
-      }
-
-      // Get latest version of input
-      const inputVersion = inputAsset.versions[0];
-      if (!inputVersion) {
-        throw new Error('Input asset has no versions');
-      }
 
       await setStatus(JobStatus.PROCESSING, 15);
 
-      // Generate signed URL to download input image
-      const signedInputUrl = await this.storageService.getDownloadSignedUrl(
-        inputVersion.objectKey,
-        60 * 60,
-      );
+      let signedInputUrl: string | undefined;
+      if (inputAsset) {
+        const inputVersion = inputAsset.versions[0];
+        if (!inputVersion) {
+          throw new Error('Input asset has no versions');
+        }
+
+        // Generate signed URL to download input image
+        const signed = await this.storageService.getDownloadSignedUrl(
+          inputVersion.objectKey,
+          60 * 60,
+        );
+        signedInputUrl = signed.url;
+      } else if (requiresInputImage) {
+        throw new Error(
+          `Input asset is required for workflow ${workflow ?? 'unknown'} (preset: ${presetId ?? 'unknown'})`,
+        );
+      }
 
       await setStatus(JobStatus.PROCESSING, 30);
 
@@ -184,13 +192,13 @@ export class VideoWorker implements OnModuleDestroy {
       const modalResponse = await this.modal.generateVideo({
         prompt: job.prompt,
         negativePrompt: job.negativePrompt ?? undefined,
-        inputImageUrl: signedInputUrl.url,
+        inputImageUrl: signedInputUrl,
         jobId: job.id,
         provider: job.provider ?? undefined,
         modelName: job.modelName ?? undefined,
-        presetId: this.extractExtraConfigString(job.extraConfig, 'presetId') ?? undefined,
+        presetId: presetId ?? undefined,
         userId: job.userId,
-        workflow: this.extractExtraConfigString(job.extraConfig, 'workflow') ?? undefined,
+        workflow: workflow ?? undefined,
       });
 
       await setStatus(JobStatus.PROCESSING, 60);
@@ -200,15 +208,37 @@ export class VideoWorker implements OnModuleDestroy {
 
       // Convert response to video buffer
       const videoBuffer = await this.modal.getVideoBuffer(modalResponse);
+      let outputVideoBuffer = videoBuffer;
+      const shouldAttachBackgroundAudio = this.shouldAttachBackgroundAudio(
+        job.extraConfig,
+      );
 
       await setStatus(JobStatus.PROCESSING, 80);
+
+      if (shouldAttachBackgroundAudio) {
+        try {
+          await this.log(jobId, 'Adding background audio');
+          outputVideoBuffer = await addBackgroundAudioToVideoBuffer(videoBuffer, {
+            prompt: job.prompt,
+            seed: job.id,
+          });
+          await this.log(jobId, 'Background audio added');
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : 'Unknown audio merge error';
+          await this.log(
+            jobId,
+            `Background audio skipped due to error: ${message}`,
+          );
+        }
+      }
 
       // Check cancellation before upload
       await this.ensureJobNotCancelled(jobId, 'Job cancelled before uploading outputs');
 
       // Upload video
       const uploadResult = await this.storageService.upload({
-        buffer: videoBuffer,
+        buffer: outputVideoBuffer,
         mimeType: 'video/mp4',
         originalName: `generated-video-${jobId}.mp4`,
         folder: `jobs/${jobId}/output`,
@@ -247,20 +277,21 @@ export class VideoWorker implements OnModuleDestroy {
           objectKey: uploadResult.key,
           mimeType: 'video/mp4',
           originalName: `${jobId}.mp4`,
-          sizeBytes: videoBuffer.length,
+          sizeBytes: outputVideoBuffer.length,
           metadata: {
             prompt: job.prompt,
             negativePrompt: job.negativePrompt,
             modelName: job.modelName,
             sourceJobId: job.id,
-            sourceInputAssetId: inputAsset.id,
+            ...(inputAsset ? { sourceInputAssetId: inputAsset.id } : {}),
             provider: 'modal',
+            backgroundAudio: shouldAttachBackgroundAudio,
           },
         },
       });
 
       // Generate thumbnail
-      const thumbnailBuffer = await generateThumbnailFromVideoBuffer(videoBuffer);
+      const thumbnailBuffer = await generateThumbnailFromVideoBuffer(outputVideoBuffer);
 
       // Upload thumbnail
       const thumbnailUploadResult = await this.storageService.upload({
@@ -302,7 +333,7 @@ export class VideoWorker implements OnModuleDestroy {
           sizeBytes: thumbnailBuffer.length,
           metadata: {
             sourceJobId: job.id,
-            sourceInputAssetId: inputAsset.id,
+            ...(inputAsset ? { sourceInputAssetId: inputAsset.id } : {}),
             provider: 'modal',
             kind: 'video-thumbnail',
           },
@@ -368,6 +399,24 @@ export class VideoWorker implements OnModuleDestroy {
     }
   }
 
+  private isBackgroundAudioEnabledGlobally(): boolean {
+    const raw = process.env.VIDEO_BACKGROUND_AUDIO_ENABLED ?? 'true';
+    return raw.toLowerCase() !== 'false';
+  }
+
+  private shouldAttachBackgroundAudio(extraConfig: Prisma.JsonValue | null): boolean {
+    if (!this.isBackgroundAudioEnabledGlobally()) {
+      return false;
+    }
+
+    const includeBackgroundAudio = this.extractExtraConfigBoolean(
+      extraConfig,
+      'includeBackgroundAudio',
+    );
+
+    return includeBackgroundAudio ?? true;
+  }
+
   // extract inputAssetId
   private extractInputAssetId(extraConfig: Prisma.JsonValue | null): string | null {
     return this.extractExtraConfigString(extraConfig, 'inputAssetId');
@@ -384,6 +433,19 @@ export class VideoWorker implements OnModuleDestroy {
 
     const value = (extraConfig as Record<string, unknown>)[key];
     return typeof value === 'string' ? value : null;
+  }
+
+  // extract boolean value from JSON config
+  private extractExtraConfigBoolean(
+    extraConfig: Prisma.JsonValue | null,
+    key: string,
+  ): boolean | null {
+    if (!extraConfig || typeof extraConfig !== 'object' || Array.isArray(extraConfig)) {
+      return null;
+    }
+
+    const value = (extraConfig as Record<string, unknown>)[key];
+    return typeof value === 'boolean' ? value : null;
   }
 
   // resolve input asset

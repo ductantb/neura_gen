@@ -12,7 +12,10 @@ export class PostLikesService {
     private readonly exploreService: ExploreService,
   ) {}
 
-  async create(userId: string, createPostLikeDto: CreatePostLikeDto) {
+  async create(
+    userId: string,
+    createPostLikeDto: CreatePostLikeDto & { postId: string },
+  ) {
     const postLike = await this.prismaService.$transaction(async (prisma) => {
       const postLike = await prisma.postLike.create({
         data: {

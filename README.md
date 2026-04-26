@@ -364,11 +364,21 @@ Nếu không truyền `role`, hệ thống mặc định là `INPUT`.
 
 Gọi `POST /jobs/video`
 
-Body ví dụ:
+Body ví dụ (TI2V có ảnh - khuyến nghị khi muốn bám chủ thể):
 
 ```json
 {
   "inputAssetId": "uuid-cua-asset-da-upload",
+  "prompt": "A girl walking in the rain, cinematic motion",
+  "negativePrompt": "blurry, low quality",
+  "presetId": "standard_wan22_ti2v"
+}
+```
+
+Body ví dụ (TI2V text-only - không cần ảnh):
+
+```json
+{
   "prompt": "A girl walking in the rain, cinematic motion",
   "negativePrompt": "blurry, low quality",
   "presetId": "standard_wan22_ti2v"
@@ -380,7 +390,13 @@ Các preset hiện có:
 - `preview_ltx_i2v`
 - `turbo_wan22_i2v_a14b`
 - `standard_wan22_ti2v`
+- `standard_wan22_ti2v_8s`
 - `quality_hunyuan_i2v`
+
+Rule `inputAssetId`:
+
+- `standard_wan22_ti2v` và `standard_wan22_ti2v_8s`: có thể truyền hoặc không truyền `inputAssetId` (TI2V hỗ trợ cả image-conditioned và text-only).
+- `preview_ltx_i2v`, `turbo_wan22_i2v_a14b`, `quality_hunyuan_i2v`: bắt buộc có `inputAssetId`.
 
 Rule quyền truy cập preset:
 
@@ -435,6 +451,18 @@ Smoke test turbo end-to-end qua backend:
 
 ```powershell
 pwsh -File scripts/smoke-test-turbo.ps1 -ImagePath path\to\input.png
+```
+
+Benchmark Wan cho cả I2V (có ảnh) và T2V (text-only), in thời gian queue/processing/total:
+
+```powershell
+pwsh -File scripts/benchmark-wan-modes.ps1 -Mode Both -ImagePath path\to\input.png
+```
+
+Benchmark riêng text-only:
+
+```powershell
+pwsh -File scripts/benchmark-wan-modes.ps1 -Mode T2V
 ```
 
 ## Một số lưu ý khi setup

@@ -28,6 +28,7 @@ export type JobSnapshotPayload = {
   tier: string | null;
   estimatedDurationSeconds: number | null;
   workflow: string | null;
+  includeBackgroundAudio: boolean;
   createdAt: string;
   updatedAt: string;
   startedAt: string | null;

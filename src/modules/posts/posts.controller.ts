@@ -61,7 +61,6 @@ export class PostsController {
   async findOne(
     @Param('id') id: string,
     @Req() req: Request,
-    @CurrentUser() user?: JwtPayload,
   ) {
     // Xử lý x-forwarded-for để lấy IP đầu tiên trong danh sách
     const forwarded = req.headers['x-forwarded-for'];
@@ -75,6 +74,8 @@ export class PostsController {
     if (!rawIp) {
       return this.postsService.findOne(id);
     }
+
+    const user = (req as Request & { user?: JwtPayload }).user;
 
     await this.postsService.trackView(id, rawIp, userAgent, user?.sub);
 

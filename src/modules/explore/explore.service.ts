@@ -147,7 +147,7 @@ export class ExploreService {
               topicsIn: preferredTopics,
               hiddenPostIds,
             }),
-            orderBy: [{ score: 'desc' }, { createdAt: 'desc' }],
+            orderBy: [{ score: 'desc' }, { post: { createdAt: 'desc' } }],
             take: takeSize,
             include: EXPLORE_ITEM_INCLUDE,
           })
@@ -159,7 +159,7 @@ export class ExploreService {
               followingIds,
               hiddenPostIds,
             }),
-            orderBy: [{ createdAt: 'desc' }, { score: 'desc' }],
+            orderBy: [{ post: { createdAt: 'desc' } }, { score: 'desc' }],
             take: takeSize,
             include: EXPLORE_ITEM_INCLUDE,
           })
@@ -170,7 +170,7 @@ export class ExploreService {
           hiddenPostIds,
           trendingOnly: true,
         }),
-        orderBy: [{ score: 'desc' }, { createdAt: 'desc' }],
+        orderBy: [{ score: 'desc' }, { post: { createdAt: 'desc' } }],
         take: takeSize,
         include: EXPLORE_ITEM_INCLUDE,
       }),
@@ -179,7 +179,7 @@ export class ExploreService {
           normalizedTopic,
           hiddenPostIds,
         }),
-        orderBy: [{ createdAt: 'desc' }],
+        orderBy: [{ post: { createdAt: 'desc' } }],
         take: takeSize,
         include: EXPLORE_ITEM_INCLUDE,
       }),
@@ -228,7 +228,7 @@ export class ExploreService {
           (postEvents.WATCH_3S ?? 0) +
           (postEvents.WATCH_50 ?? 0);
 
-        const ageHours = (Date.now() - item.createdAt.getTime()) / 3_600_000;
+        const ageHours = (Date.now() - item.post.createdAt.getTime()) / 3_600_000;
         const topicBonus = Math.min(10, (topicAffinity[item.topic] ?? 0) * 0.8);
         const followBonus = followingSet.has(item.post.user.id) ? 3.5 : 0;
         const freshnessBonus = Math.max(0, 24 - ageHours) * 0.08;
@@ -258,7 +258,7 @@ export class ExploreService {
         if (b.personalScore !== a.personalScore) {
           return b.personalScore - a.personalScore;
         }
-        return b.createdAt.getTime() - a.createdAt.getTime();
+        return b.post.createdAt.getTime() - a.post.createdAt.getTime();
       });
 
     const startIndex = cursor
@@ -405,9 +405,9 @@ export class ExploreService {
     sort?: ExploreQueryDto['sort'],
   ): Prisma.ExploreItemOrderByWithRelationInput[] {
     if (sort === 'newest' || mode === 'new') {
-      return [{ createdAt: 'desc' }, { score: 'desc' }];
+      return [{ post: { createdAt: 'desc' } }, { score: 'desc' }];
     }
-    return [{ score: 'desc' }, { createdAt: 'desc' }];
+    return [{ score: 'desc' }, { post: { createdAt: 'desc' } }];
   }
 
   private buildExploreWhere(options: {

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Get,
   Post,
@@ -35,10 +36,14 @@ export class PostLikesController {
   })
   @Post()
   create(
+    @Param('postId') postId: string,
     @CurrentUser() user: JwtPayload,
     @Body() createPostLikeDto: CreatePostLikeDto,
   ) {
-    return this.postLikesService.create(user.sub, createPostLikeDto);
+    return this.postLikesService.create(user.sub, {
+      ...createPostLikeDto,
+      postId: this.resolvePostId(postId, createPostLikeDto.postId),
+    });
   }
 
   @ApiOperation({
@@ -68,5 +73,16 @@ export class PostLikesController {
       sub: user.sub,
       role: user.role,
     });
+  }
+
+  private resolvePostId(routePostId: string, bodyPostId?: string) {
+    const normalizedBodyPostId = bodyPostId?.trim();
+    if (normalizedBodyPostId && normalizedBodyPostId !== routePostId) {
+      throw new BadRequestException(
+        'postId trong body không khớp với postId trên URL',
+      );
+    }
+
+    return routePostId;
   }
 }

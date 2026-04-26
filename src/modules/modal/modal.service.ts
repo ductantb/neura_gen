@@ -8,6 +8,7 @@ const TURBO_WAN_MODEL_NAME = 'wan2.2-i2v-a14b-turbo';
 const TURBO_WAN_PRESET_ID = 'turbo_wan22_i2v_a14b';
 const WAN_STANDARD_MODEL_NAME = 'wan2.2-ti2v-standard';
 const WAN_STANDARD_PRESET_ID = 'standard_wan22_ti2v';
+const WAN_STANDARD_8S_PRESET_ID = 'standard_wan22_ti2v_8s';
 const HUNYUAN_QUALITY_MODEL_NAME = 'hunyuan-video-i2v-quality';
 const HUNYUAN_QUALITY_PRESET_ID = 'quality_hunyuan_i2v';
 
@@ -33,6 +34,7 @@ export class ModalService {
     }
 
     if (
+      payload.presetId === WAN_STANDARD_8S_PRESET_ID ||
       payload.presetId === WAN_STANDARD_PRESET_ID ||
       payload.modelName === WAN_STANDARD_MODEL_NAME
     ) {
@@ -71,6 +73,12 @@ export class ModalService {
       payload.modelName === TURBO_WAN_MODEL_NAME
     ) {
       return 20 * 60 * 1000;
+    }
+
+    if (
+      payload.presetId === WAN_STANDARD_8S_PRESET_ID
+    ) {
+      return 60 * 60 * 1000;
     }
 
     if (
@@ -220,7 +228,7 @@ export class ModalService {
 export interface GenerateVideoInput {
   prompt: string;
   negativePrompt?: string;
-  inputImageUrl: string;
+  inputImageUrl?: string;
   jobId?: string;
   provider?: string;
   modelName?: string;

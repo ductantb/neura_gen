@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Get,
   Post,
@@ -27,10 +28,14 @@ export class CommentsController {
   })
   @Post()
   create(
+    @Param('postId') postId: string,
     @CurrentUser() user: JwtPayload,
     @Body() createCommentDto: CreateCommentDto,
   ) {
-    return this.commentsService.create(user.sub, createCommentDto);
+    return this.commentsService.create(user.sub, {
+      ...createCommentDto,
+      postId: this.resolvePostId(postId, createCommentDto.postId),
+    });
   }
 
   @ApiOperation({
@@ -68,5 +73,16 @@ export class CommentsController {
   @Delete(':id')
   remove(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
     return this.commentsService.remove(id, { sub: user.sub, role: user.role });
+  }
+
+  private resolvePostId(routePostId: string, bodyPostId?: string) {
+    const normalizedBodyPostId = bodyPostId?.trim();
+    if (normalizedBodyPostId && normalizedBodyPostId !== routePostId) {
+      throw new BadRequestException(
+        'postId trong body không khớp với postId trên URL',
+      );
+    }
+
+    return routePostId;
   }
 }

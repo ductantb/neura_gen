@@ -15,6 +15,7 @@ LTX_PREVIEW_MODEL_NAME = "ltx-video-i2v-preview"
 LTX_PREVIEW_PRESET_ID = "preview_ltx_i2v"
 WAN_STANDARD_MODEL_NAME = "wan2.2-ti2v-standard"
 WAN_STANDARD_PRESET_ID = "standard_wan22_ti2v"
+WAN_STANDARD_8S_PRESET_ID = "standard_wan22_ti2v_8s"
 HUNYUAN_QUALITY_MODEL_NAME = "hunyuan-video-i2v-quality"
 HUNYUAN_QUALITY_PRESET_ID = "quality_hunyuan_i2v"
 LTX_TARGET_WIDTH = 832
@@ -26,7 +27,8 @@ LTX_VIDEO_FPS = 24
 # Tuned for L40S: keep 720p-ish quality while avoiding the long runtimes
 # and timeout risk of the heavier 121-frame / 50-step configuration.
 WAN_MAX_AREA = 704 * 1280
-WAN_NUM_FRAMES = 121
+WAN_NUM_FRAMES_5S = 121
+WAN_NUM_FRAMES_8S = 193
 WAN_NUM_INFERENCE_STEPS = 40
 WAN_GUIDANCE_SCALE = 4.5
 WAN_VIDEO_FPS = 24
@@ -57,6 +59,11 @@ WAN_QUALITY_PROMPT_SUFFIX = (
     "from the input image while creating premium cinematic image-to-video motion. "
     "Add rich natural movement, believable body mechanics, realistic physics, elegant "
     "camera motion, clean fine detail, stable anatomy, and strong temporal consistency."
+)
+WAN_T2V_PROMPT_SUFFIX = (
+    "Generate a premium cinematic text-to-video shot with rich natural motion, "
+    "believable body mechanics, realistic physics, stable anatomy, clean details, "
+    "and strong temporal consistency from the first frame to the last."
 )
 WAN_NEGATIVE_PROMPT = (
     "low quality, blurry, static, frozen frame, weak motion, temporal flicker, "
@@ -109,7 +116,8 @@ image = (
 app = modal.App("neura-video-gen", image=image)
 
 _LTX_PIPELINE = None
-_WAN_PIPELINE = None
+_WAN_T2V_PIPELINE = None
+_WAN_I2V_PIPELINE = None
 _HUNYUAN_PIPELINE = None
 
 
@@ -156,20 +164,21 @@ def _validate_wan_request(
     preset_id: str | None,
     workflow: str | None,
 ) -> None:
-    if not input_image_url:
-        raise ValueError("Wan 2.2 TI2V currently requires inputImageUrl in this backend")
-
     if model_name and model_name != WAN_STANDARD_MODEL_NAME:
         raise ValueError(
             f"Unsupported modelName for Wan TI2V deployment: {model_name}"
         )
 
-    if preset_id and preset_id != WAN_STANDARD_PRESET_ID:
+    allowed_preset_ids = {
+        WAN_STANDARD_PRESET_ID,
+        WAN_STANDARD_8S_PRESET_ID,
+    }
+    if preset_id and preset_id not in allowed_preset_ids:
         raise ValueError(
             f"Unsupported presetId for Wan TI2V deployment: {preset_id}"
         )
 
-    if workflow and workflow != "TI2V":
+    if workflow and workflow not in {"TI2V", "I2V", "T2V"}:
         raise ValueError(f"Unsupported workflow for Wan TI2V deployment: {workflow}")
 
 
@@ -216,8 +225,9 @@ def _build_negative_prompt(negative_prompt: str | None) -> str:
     return ", ".join(part for part in parts if part)
 
 
-def _build_wan_prompt(prompt: str) -> str:
-    return f"{prompt.strip()}. {WAN_QUALITY_PROMPT_SUFFIX} The final clip should feel like a premium 24fps cinematic shot."
+def _build_wan_prompt(prompt: str, has_input_image: bool) -> str:
+    suffix = WAN_QUALITY_PROMPT_SUFFIX if has_input_image else WAN_T2V_PROMPT_SUFFIX
+    return f"{prompt.strip()}. {suffix} The final clip should feel like a premium 24fps cinematic shot."
 
 
 def _build_wan_negative_prompt(negative_prompt: str | None) -> str:
@@ -240,17 +250,36 @@ def _build_hunyuan_negative_prompt(negative_prompt: str | None) -> str:
     return ", ".join(part for part in parts if part)
 
 
-def _resolve_wan_profile():
-    return {
-        "max_area": WAN_MAX_AREA,
-        "num_frames": WAN_NUM_FRAMES,
-        "num_inference_steps": WAN_NUM_INFERENCE_STEPS,
-        "guidance_scale": WAN_GUIDANCE_SCALE,
-        "fps": WAN_VIDEO_FPS,
-        "message": "Wan 2.2 TI2V standard generated successfully",
-        "preset_id": WAN_STANDARD_PRESET_ID,
-        "debug_version": "modal_wan22_ti2v_standard_v2_5s",
-    }
+def _resolve_wan_profile(preset_id: str | None):
+    resolved_preset_id = preset_id or WAN_STANDARD_PRESET_ID
+
+    if resolved_preset_id == WAN_STANDARD_8S_PRESET_ID:
+        return {
+            "max_area": WAN_MAX_AREA,
+            "num_frames": WAN_NUM_FRAMES_8S,
+            "num_inference_steps": WAN_NUM_INFERENCE_STEPS,
+            "guidance_scale": WAN_GUIDANCE_SCALE,
+            "fps": WAN_VIDEO_FPS,
+            "i2v_message": "Wan 2.2 TI2V standard (8s) generated successfully",
+            "t2v_message": "Wan 2.2 T2V standard (8s) generated successfully",
+            "preset_id": WAN_STANDARD_8S_PRESET_ID,
+            "debug_version": "modal_wan22_ti2v_standard_v3_8s",
+        }
+
+    if resolved_preset_id == WAN_STANDARD_PRESET_ID:
+        return {
+            "max_area": WAN_MAX_AREA,
+            "num_frames": WAN_NUM_FRAMES_5S,
+            "num_inference_steps": WAN_NUM_INFERENCE_STEPS,
+            "guidance_scale": WAN_GUIDANCE_SCALE,
+            "fps": WAN_VIDEO_FPS,
+            "i2v_message": "Wan 2.2 TI2V standard generated successfully",
+            "t2v_message": "Wan 2.2 T2V standard generated successfully",
+            "preset_id": WAN_STANDARD_PRESET_ID,
+            "debug_version": "modal_wan22_ti2v_standard_v3_5s",
+        }
+
+    raise ValueError(f"Unsupported presetId for Wan TI2V deployment: {resolved_preset_id}")
 
 
 def _resolve_hunyuan_profile():
@@ -290,11 +319,34 @@ def _load_ltx_pipeline():
     return _LTX_PIPELINE
 
 
-def _load_wan_pipeline():
-    global _WAN_PIPELINE
+def _load_wan_t2v_pipeline():
+    global _WAN_T2V_PIPELINE
 
-    if _WAN_PIPELINE is not None:
-        return _WAN_PIPELINE
+    if _WAN_T2V_PIPELINE is not None:
+        return _WAN_T2V_PIPELINE
+
+    _release_wan_i2v_pipeline()
+
+    import torch
+    from diffusers import WanPipeline
+
+    pipe = WanPipeline.from_pretrained(
+        WAN_MODEL_ID,
+        torch_dtype=torch.bfloat16,
+    )
+    pipe.to("cuda")
+
+    _WAN_T2V_PIPELINE = pipe
+    return _WAN_T2V_PIPELINE
+
+
+def _load_wan_i2v_pipeline():
+    global _WAN_I2V_PIPELINE
+
+    if _WAN_I2V_PIPELINE is not None:
+        return _WAN_I2V_PIPELINE
+
+    _release_wan_t2v_pipeline()
 
     import torch
     from diffusers import WanImageToVideoPipeline
@@ -305,8 +357,41 @@ def _load_wan_pipeline():
     )
     pipe.to("cuda")
 
-    _WAN_PIPELINE = pipe
-    return _WAN_PIPELINE
+    _WAN_I2V_PIPELINE = pipe
+    return _WAN_I2V_PIPELINE
+
+
+def _release_wan_t2v_pipeline():
+    global _WAN_T2V_PIPELINE
+    if _WAN_T2V_PIPELINE is None:
+        return
+
+    _WAN_T2V_PIPELINE = None
+    _cleanup_cuda_memory()
+
+
+def _release_wan_i2v_pipeline():
+    global _WAN_I2V_PIPELINE
+    if _WAN_I2V_PIPELINE is None:
+        return
+
+    _WAN_I2V_PIPELINE = None
+    _cleanup_cuda_memory()
+
+
+def _cleanup_cuda_memory():
+    import gc
+
+    gc.collect()
+
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        # Best-effort cleanup only; don't block inference if torch cleanup fails.
+        pass
 
 
 def _load_hunyuan_pipeline():
@@ -383,6 +468,24 @@ def _load_wan_input_image(image_url: str, pipe, max_area: int):
 
     resized = image.resize((width, height), Image.Resampling.LANCZOS)
     return resized, height, width
+
+
+def _resolve_wan_text_dimensions(pipe, max_area: int):
+    import numpy as np
+
+    # Default to a 16:9 landscape canvas for text-only generation.
+    aspect_ratio = 9 / 16
+    mod_value = pipe.vae_scale_factor_spatial * pipe.transformer.config.patch_size[1]
+
+    height = max(
+        mod_value,
+        round(np.sqrt(max_area * aspect_ratio)) // mod_value * mod_value,
+    )
+    width = max(
+        mod_value,
+        round(np.sqrt(max_area / aspect_ratio)) // mod_value * mod_value,
+    )
+    return height, width
 
 
 def _load_hunyuan_input_image(image_url: str):
@@ -534,7 +637,7 @@ def generate_video(req: dict):
 
 @app.function(
     gpu="L40S",
-    timeout=60 * 45,
+    timeout=60 * 60,
     scaledown_window=10 * 60,
     volumes={MODEL_CACHE_DIR: cache_volume},
 )
@@ -608,25 +711,37 @@ def _generate_wan_video_response(
 
     _validate_wan_request(input_image_url, model_name, preset_id, workflow)
 
-    profile = _resolve_wan_profile()
-    pipe = _load_wan_pipeline()
-    image, height, width = _load_wan_input_image(
-        input_image_url,
-        pipe,
-        profile["max_area"],
-    )
+    profile = _resolve_wan_profile(preset_id)
+    has_input_image = bool(input_image_url)
+    image = None
+    if has_input_image:
+        pipe = _load_wan_i2v_pipeline()
+        image, height, width = _load_wan_input_image(
+            input_image_url,
+            pipe,
+            profile["max_area"],
+        )
+    else:
+        pipe = _load_wan_t2v_pipeline()
+        height, width = _resolve_wan_text_dimensions(pipe, profile["max_area"])
+
     generator = torch.Generator(device="cuda").manual_seed(_seed_from_job(job_id))
 
+    generation_kwargs = {
+        "prompt": _build_wan_prompt(prompt, has_input_image),
+        "negative_prompt": _build_wan_negative_prompt(negative_prompt),
+        "height": height,
+        "width": width,
+        "num_frames": profile["num_frames"],
+        "num_inference_steps": profile["num_inference_steps"],
+        "guidance_scale": profile["guidance_scale"],
+        "generator": generator,
+    }
+    if has_input_image:
+        generation_kwargs["image"] = image
+
     result = pipe(
-        prompt=_build_wan_prompt(prompt),
-        negative_prompt=_build_wan_negative_prompt(negative_prompt),
-        height=height,
-        width=width,
-        num_frames=profile["num_frames"],
-        num_inference_steps=profile["num_inference_steps"],
-        guidance_scale=profile["guidance_scale"],
-        image=image,
-        generator=generator,
+        **generation_kwargs,
     )
     frames = result.frames[0]
 
@@ -641,9 +756,10 @@ def _generate_wan_video_response(
         if os.path.exists(output_path):
             os.remove(output_path)
 
+    resolved_workflow = "I2V" if has_input_image else "T2V"
     return {
         "status": "ok",
-        "message": profile["message"],
+        "message": profile["i2v_message"] if has_input_image else profile["t2v_message"],
         "job_id": job_id,
         "prompt": prompt,
         "negative_prompt": negative_prompt,
@@ -652,7 +768,7 @@ def _generate_wan_video_response(
         "model_name": model_name or WAN_STANDARD_MODEL_NAME,
         "preset_id": preset_id or profile["preset_id"],
         "user_id": user_id,
-        "workflow": workflow or "TI2V",
+        "workflow": resolved_workflow,
         "video_base64": encoded_video,
         "generation_config": {
             "width": width,
@@ -661,6 +777,7 @@ def _generate_wan_video_response(
             "num_inference_steps": profile["num_inference_steps"],
             "guidance_scale": profile["guidance_scale"],
             "fps": profile["fps"],
+            "input_mode": "image" if has_input_image else "text",
         },
         "debug_version": profile["debug_version"],
     }
@@ -739,7 +856,7 @@ def _generate_hunyuan_video_response(
 
 @app.function(
     gpu="L40S",
-    timeout=60 * 45,
+    timeout=60 * 60,
     scaledown_window=10 * 60,
     volumes={MODEL_CACHE_DIR: cache_volume},
 )

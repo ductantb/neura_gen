@@ -17,7 +17,10 @@ export class CommentsService {
     private readonly exploreService: ExploreService,
   ) {}
 
-  async create(userId: string, createCommentDto: CreateCommentDto) {
+  async create(
+    userId: string,
+    createCommentDto: CreateCommentDto & { postId: string },
+  ) {
     const comment = await this.prismaService.$transaction(async (prisma) => {
       await prisma.post.update({
         where: { id: createCommentDto.postId },

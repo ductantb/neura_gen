@@ -53,31 +53,46 @@ export class JobsService {
 
   async createVideoJob(userId: string, dto: CreateVideoJobDto) {
     const preset = resolveVideoPreset(dto.presetId);
-    const inputAsset = await this.prisma.asset.findUnique({
-      where: { id: dto.inputAssetId },
-      include: {
-        versions: {
-          orderBy: { version: 'desc' },
-          take: 1,
-        },
-      },
-    });
+    const includeBackgroundAudio = dto.includeBackgroundAudio ?? true;
+    const requiresInputAsset = preset.workflow === 'I2V';
+    if (requiresInputAsset && !dto.inputAssetId) {
+      throw new BadRequestException(
+        `Preset ${preset.id} requires inputAssetId for image-conditioned generation`,
+      );
+    }
 
-    if (!inputAsset) {
+    const inputAsset = dto.inputAssetId
+      ? await this.prisma.asset.findUnique({
+          where: { id: dto.inputAssetId },
+          include: {
+            versions: {
+              orderBy: { version: 'desc' },
+              take: 1,
+            },
+          },
+        })
+      : null;
+
+    if (dto.inputAssetId && !inputAsset) {
       throw new NotFoundException('Input asset not found');
     }
 
-    if (inputAsset.userId !== userId) {
+    if (inputAsset && inputAsset.userId !== userId) {
       throw new BadRequestException('Input asset does not belong to the user');
     }
 
-    if (inputAsset.role !== AssetRole.INPUT) {
+    if (inputAsset && inputAsset.role !== AssetRole.INPUT) {
       throw new BadRequestException("Asset role must be 'INPUT'");
     }
 
-    if (inputAsset.versions.length === 0) {
+    if (inputAsset && inputAsset.versions.length === 0) {
       throw new BadRequestException('Input asset has no versions');
     }
+
+    const inputAssetMetadata = dto.inputAssetId
+      ? { inputAssetId: dto.inputAssetId }
+      : {};
+    const inputMode = inputAsset ? 'I2V' : 'T2V';
 
     const createdJob = await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.findUnique({
@@ -155,7 +170,7 @@ export class JobsService {
               amount: 0,
               reason: CreditReason.PRO_DAILY_FREE_USAGE,
               metadata: {
-                inputAssetId: dto.inputAssetId,
+                ...inputAssetMetadata,
                 prompt: dto.prompt,
                 presetId: preset.id,
                 dateKey,
@@ -196,7 +211,7 @@ export class JobsService {
             amount: -chargedCreditCost,
             reason: CreditReason.CREATE_IMAGE_TO_VIDEO_JOB,
             metadata: {
-              inputAssetId: dto.inputAssetId,
+              ...inputAssetMetadata,
               prompt: dto.prompt,
               presetId: preset.id,
               baseCreditCost: preset.creditCost,
@@ -220,9 +235,11 @@ export class JobsService {
           creditCost: chargedCreditCost,
           provider: preset.provider,
           extraConfig: {
-            inputAssetId: dto.inputAssetId,
+            ...inputAssetMetadata,
             presetId: preset.id,
             workflow: preset.workflow,
+            inputMode,
+            includeBackgroundAudio,
             baseCreditCost: preset.creditCost,
             chargedCreditCost,
             freeCreditApplied: dailyFreeApplied,
@@ -230,12 +247,20 @@ export class JobsService {
           logs: {
             create: [
               { message: 'Job created' },
-              { message: `Input asset: ${inputAsset.id}` },
+              {
+                message: inputAsset
+                  ? `Input asset: ${inputAsset.id}`
+                  : 'Input asset: none (text-only mode)',
+              },
+              { message: `Input mode: ${inputMode}` },
               { message: `Base credit cost: ${preset.creditCost}` },
               { message: `Free credit applied: ${dailyFreeApplied}` },
               { message: `Credit charged: ${chargedCreditCost}` },
               { message: `Preset selected: ${preset.id}` },
               { message: `Tier selected: ${preset.tier}` },
+              {
+                message: `Background audio: ${includeBackgroundAudio ? 'on' : 'off'}`,
+              },
               {
                 message: `Estimated runtime: ${preset.estimatedDurationSeconds}s`,
               },
@@ -373,6 +398,7 @@ export class JobsService {
       tier: preset.tier,
       turboEnabled: preset.turboEnabled,
       estimatedDurationSeconds: preset.estimatedDurationSeconds,
+      includeBackgroundAudio,
     };
   }
 
@@ -447,6 +473,7 @@ export class JobsService {
           estimatedDurationSeconds:
             this.extractPresetMetadata(job.extraConfig)?.estimatedDurationSeconds ?? null,
           workflow: this.extractWorkflow(job.extraConfig),
+          includeBackgroundAudio: this.extractIncludeBackgroundAudio(job.extraConfig),
           createdAt: job.createdAt,
           updatedAt: job.updatedAt,
           output,
@@ -504,6 +531,7 @@ export class JobsService {
       estimatedDurationSeconds:
         this.extractPresetMetadata(job.extraConfig)?.estimatedDurationSeconds ?? null,
       workflow: this.extractWorkflow(job.extraConfig),
+      includeBackgroundAudio: this.extractIncludeBackgroundAudio(job.extraConfig),
       creditCost: job.creditCost,
       errorMessage: job.errorMessage,
       createdAt: job.createdAt,
@@ -617,6 +645,7 @@ export class JobsService {
       estimatedDurationSeconds:
         this.extractPresetMetadata(job.extraConfig)?.estimatedDurationSeconds ?? null,
       workflow: this.extractWorkflow(job.extraConfig),
+      includeBackgroundAudio: this.extractIncludeBackgroundAudio(job.extraConfig),
       assetId: outputAsset.id,
       bucket: latestVersion.bucket,
       objectKey: latestVersion.objectKey,
@@ -786,6 +815,7 @@ export class JobsService {
       estimatedDurationSeconds:
         this.extractPresetMetadata(job.extraConfig)?.estimatedDurationSeconds ?? null,
       workflow: this.extractWorkflow(job.extraConfig),
+      includeBackgroundAudio: this.extractIncludeBackgroundAudio(job.extraConfig),
       createdAt: job.createdAt.toISOString(),
       updatedAt: job.updatedAt.toISOString(),
       startedAt: job.startedAt?.toISOString() ?? null,
@@ -890,6 +920,17 @@ export class JobsService {
     return typeof maybeWorkflow === 'string'
       ? (maybeWorkflow as VideoGenerationWorkflow)
       : null;
+  }
+
+  private extractIncludeBackgroundAudio(
+    extraConfig: Prisma.JsonValue | null,
+  ): boolean {
+    if (!extraConfig || typeof extraConfig !== 'object' || Array.isArray(extraConfig)) {
+      return true;
+    }
+
+    const maybeAudioFlag = (extraConfig as Record<string, unknown>).includeBackgroundAudio;
+    return typeof maybeAudioFlag === 'boolean' ? maybeAudioFlag : true;
   }
 
   private extractPresetMetadata(extraConfig: Prisma.JsonValue | null) {
