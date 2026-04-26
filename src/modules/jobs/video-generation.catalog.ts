@@ -1,7 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 
 export type VideoGenerationProvider = 'modal';
-export type VideoGenerationWorkflow = 'I2V' | 'TI2V';
+export type VideoGenerationWorkflow = 'I2V' | 'TI2V' | 'T2V';
 export type VideoGenerationTier = 'preview' | 'standard' | 'quality' | 'turbo';
 export type VideoGenerationPresetId =
   | 'preview_ltx_i2v'

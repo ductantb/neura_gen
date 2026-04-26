@@ -92,7 +92,10 @@ export class JobsService {
     const inputAssetMetadata = dto.inputAssetId
       ? { inputAssetId: dto.inputAssetId }
       : {};
-    const inputMode = inputAsset ? 'I2V' : 'T2V';
+    const executionWorkflow = this.resolveExecutionWorkflow(
+      preset.workflow,
+      !!inputAsset,
+    );
 
     const createdJob = await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.findUnique({
@@ -237,8 +240,9 @@ export class JobsService {
           extraConfig: {
             ...inputAssetMetadata,
             presetId: preset.id,
-            workflow: preset.workflow,
-            inputMode,
+            workflow: executionWorkflow,
+            presetWorkflow: preset.workflow,
+            inputMode: executionWorkflow,
             includeBackgroundAudio,
             baseCreditCost: preset.creditCost,
             chargedCreditCost,
@@ -252,7 +256,8 @@ export class JobsService {
                   ? `Input asset: ${inputAsset.id}`
                   : 'Input asset: none (text-only mode)',
               },
-              { message: `Input mode: ${inputMode}` },
+              { message: `Execution workflow: ${executionWorkflow}` },
+              { message: `Preset capability: ${preset.workflow}` },
               { message: `Base credit cost: ${preset.creditCost}` },
               { message: `Free credit applied: ${dailyFreeApplied}` },
               { message: `Credit charged: ${chargedCreditCost}` },
@@ -916,9 +921,20 @@ export class JobsService {
       return null;
     }
 
-    const maybeWorkflow = (extraConfig as Record<string, unknown>).workflow;
-    return typeof maybeWorkflow === 'string'
-      ? (maybeWorkflow as VideoGenerationWorkflow)
+    const config = extraConfig as Record<string, unknown>;
+    const maybeWorkflow = config.workflow;
+    if (typeof maybeWorkflow === 'string') {
+      return maybeWorkflow as VideoGenerationWorkflow;
+    }
+
+    const maybeInputMode = config.inputMode;
+    if (typeof maybeInputMode === 'string') {
+      return maybeInputMode as VideoGenerationWorkflow;
+    }
+
+    const maybePresetWorkflow = config.presetWorkflow;
+    return typeof maybePresetWorkflow === 'string'
+      ? (maybePresetWorkflow as VideoGenerationWorkflow)
       : null;
   }
 
@@ -987,6 +1003,17 @@ export class JobsService {
     }
 
     return proExpiresAt.getTime() > Date.now() ? UserRole.PRO : UserRole.FREE;
+  }
+
+  private resolveExecutionWorkflow(
+    presetWorkflow: VideoGenerationWorkflow,
+    hasInputAsset: boolean,
+  ): VideoGenerationWorkflow {
+    if (presetWorkflow === 'TI2V') {
+      return hasInputAsset ? 'I2V' : 'T2V';
+    }
+
+    return presetWorkflow;
   }
 
   private async refundCreditIfMissing(

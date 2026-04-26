@@ -12,6 +12,20 @@ const WAN_STANDARD_8S_PRESET_ID = 'standard_wan22_ti2v_8s';
 const HUNYUAN_QUALITY_MODEL_NAME = 'hunyuan-video-i2v-quality';
 const HUNYUAN_QUALITY_PRESET_ID = 'quality_hunyuan_i2v';
 
+type ModalRequestError = Error & {
+  statusCode?: number;
+  responseBody?: string;
+  retryable?: boolean;
+};
+
+type AxiosLikeError = Error & {
+  isAxiosError?: boolean;
+  response?: {
+    status?: number;
+    data?: unknown;
+  };
+};
+
 @Injectable()
 export class ModalService {
   constructor(private readonly http: HttpService) {}
@@ -98,6 +112,23 @@ export class ModalService {
     return 10 * 60 * 1000;
   }
 
+  private isRetryableModalError(statusCode?: number, responseBody?: string) {
+    if (statusCode === undefined) {
+      return true;
+    }
+
+    if (statusCode === 408 || statusCode === 425 || statusCode >= 500) {
+      return true;
+    }
+
+    if (statusCode === 429) {
+      const normalizedBody = (responseBody ?? '').toLowerCase();
+      return !normalizedBody.includes('billing cycle spend limit reached');
+    }
+
+    return false;
+  }
+
   async generateVideo(payload: GenerateVideoInput) {
     try {
       const generateUrl = this.resolveGenerateUrl(payload);
@@ -115,6 +146,26 @@ export class ModalService {
       return res.data;
     } catch (error) {
       console.error('Modal API Error:', error);
+      const axiosLikeError = error as AxiosLikeError;
+      if (axiosLikeError?.response || axiosLikeError?.isAxiosError) {
+        const statusCode = axiosLikeError.response?.status;
+        const responseBody =
+          typeof axiosLikeError.response?.data === 'string'
+            ? axiosLikeError.response.data
+            : JSON.stringify(axiosLikeError.response?.data ?? {});
+        const message = statusCode
+          ? `Modal request failed with status ${statusCode}: ${responseBody}`
+          : axiosLikeError.message;
+        const modalError = new Error(message) as ModalRequestError;
+        modalError.statusCode = statusCode;
+        modalError.responseBody = responseBody;
+        modalError.retryable = this.isRetryableModalError(
+          statusCode,
+          responseBody,
+        );
+        throw modalError;
+      }
+
       throw error;
     }
   }
