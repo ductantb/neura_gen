@@ -7,6 +7,7 @@ import { CurrentUser } from 'src/common/decorators/user.decorator';
 import { JwtPayload } from 'src/common/guards/jwt-auth.guard';
 import { RecordExploreEventDto } from './dto/record-explore-event.dto';
 import { BatchRecordExploreEventsDto } from './dto/batch-record-explore-events.dto';
+import { SearchExploreByTopicDto } from './dto/search-explore-by-topic.dto';
 
 @Controller('explore')
 export class ExploreController {
@@ -21,6 +22,17 @@ export class ExploreController {
   @Get()
   async getExplore(@Query() query: ExploreQueryDto) {
     return this.exploreService.getExplore(query);
+  }
+
+  @ApiOperation({
+    summary: 'Search explore items by topic',
+    description:
+      'Tìm ExploreItem theo chủ đề đã được chuẩn hóa. Kết quả trả về là ExploreItem public, không phải Post.',
+  })
+  @Public()
+  @Get('search')
+  async searchByTopic(@Query() query: SearchExploreByTopicDto) {
+    return this.exploreService.searchByTopic(query);
   }
 
   @ApiBearerAuth('access-token')

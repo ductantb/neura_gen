@@ -3,6 +3,8 @@ import { PostsService } from './posts.service';
 describe('PostsService', () => {
   const prismaService = {
     post: {
+      create: jest.fn(),
+      update: jest.fn(),
       findUnique: jest.fn(),
       findMany: jest.fn(),
     },
@@ -96,6 +98,49 @@ describe('PostsService', () => {
       id: 'post-2',
       videoUrl: null,
       thumbnailUrl: 'https://cdn.example/image.png',
+    });
+  });
+
+  it('accepts videoUrl and thumbnailUrl in create request but does not persist them', async () => {
+    prismaService.post.create.mockResolvedValue({
+      id: 'post-3',
+    });
+    prismaService.post.findUnique.mockResolvedValue({
+      id: 'post-3',
+      assetVersionId: 'version-3',
+      assetVersion: {
+        id: 'version-3',
+        fileUrl: 'https://cdn.example/video.mp4',
+        mimeType: 'video/mp4',
+        metadata: {},
+        asset: {
+          type: 'VIDEO',
+          job: {
+            assets: [],
+          },
+        },
+      },
+      user: {
+        id: 'user-1',
+        username: 'alice',
+      },
+    });
+
+    await service.create('user-1', {
+      assetVersionId: 'version-3',
+      caption: 'demo',
+      isPublic: true,
+      videoUrl: 'https://client.example/video.mp4',
+      thumbnailUrl: 'https://client.example/thumb.jpg',
+    });
+
+    expect(prismaService.post.create).toHaveBeenCalledWith({
+      data: {
+        assetVersionId: 'version-3',
+        caption: 'demo',
+        isPublic: true,
+        userId: 'user-1',
+      },
     });
   });
 });

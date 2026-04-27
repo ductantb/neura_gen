@@ -64,6 +64,11 @@ type PostWithMediaRelations = Prisma.PostGetPayload<{
   include: typeof POST_WITH_MEDIA_INCLUDE;
 }>;
 
+type PersistedPostInput = Pick<
+  CreatePostDto,
+  'assetVersionId' | 'caption' | 'isPublic'
+>;
+
 @Injectable()
 export class PostsService {
   constructor(
@@ -73,9 +78,11 @@ export class PostsService {
   ) {}
 
   async create(userId: string, createPostDto: CreatePostDto) {
+    const persistedPostData = this.pickCreatePostData(createPostDto);
+
     const post = await this.prismaService.post.create({
       data: {
-        ...createPostDto,
+        ...persistedPostData,
         userId,
       },
     });
@@ -115,9 +122,11 @@ export class PostsService {
     if (post.userId !== user.sub && user.role !== UserRole.ADMIN)
       throw new ForbiddenException('Không có quyền cập nhật post này');
 
+    const persistedPostData = this.pickUpdatePostData(updatePostDto);
+
     const updatedPost = await this.prismaService.post.update({
       where: { id },
-      data: updatePostDto,
+      data: persistedPostData,
     });
 
     await this.exploreService.syncPost(updatedPost.id);
@@ -218,6 +227,30 @@ export class PostsService {
       ...post,
       thumbnailUrl,
       videoUrl,
+    };
+  }
+
+  private pickCreatePostData(dto: CreatePostDto): PersistedPostInput {
+    return {
+      assetVersionId: dto.assetVersionId,
+      caption: dto.caption,
+      isPublic: dto.isPublic,
+    };
+  }
+
+  private pickUpdatePostData(
+    dto: Partial<CreatePostDto>,
+  ): Partial<PersistedPostInput> {
+    return {
+      ...(dto.assetVersionId !== undefined && {
+        assetVersionId: dto.assetVersionId,
+      }),
+      ...(dto.caption !== undefined && {
+        caption: dto.caption,
+      }),
+      ...(dto.isPublic !== undefined && {
+        isPublic: dto.isPublic,
+      }),
     };
   }
 }

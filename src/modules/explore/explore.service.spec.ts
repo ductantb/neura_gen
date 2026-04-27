@@ -41,6 +41,25 @@ describe('ExploreService', () => {
     );
   });
 
+  it('searches explore items by topic via the public top-mode feed', async () => {
+    prismaService.exploreItem.findMany.mockResolvedValue([]);
+
+    await service.searchByTopic({
+      topic: 'anime',
+      sort: 'score',
+      limit: 20,
+    });
+
+    expect(prismaService.exploreItem.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          topic: 'anime',
+        }),
+        orderBy: [{ score: 'desc' }, { post: { createdAt: 'desc' } }],
+      }),
+    );
+  });
+
   it('uses Post.createdAt when ranking the for-you feed freshness', async () => {
     prismaService.userTopicProfile.findMany.mockResolvedValue([
       {

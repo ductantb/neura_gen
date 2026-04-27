@@ -5,6 +5,7 @@ import { PrismaService } from 'src/infra/prisma/prisma.service';
 import { ExploreQueryDto } from './dto/explore-query.dto';
 import { RecordExploreEventDto } from './dto/record-explore-event.dto';
 import { BatchRecordExploreEventsDto } from './dto/batch-record-explore-events.dto';
+import { SearchExploreByTopicDto } from './dto/search-explore-by-topic.dto';
 
 type ExploreMode = 'trending' | 'new' | 'top';
 
@@ -86,6 +87,17 @@ export class ExploreService {
       nextCursor: hasNext ? items[items.length - 1].id : null,
       limit,
     };
+  }
+
+  searchByTopic(query: SearchExploreByTopicDto) {
+    return this.getExplore({
+      topic: query.topic,
+      sort: query.sort,
+      trending: query.trending,
+      limit: query.limit,
+      cursor: query.cursor,
+      mode: 'top',
+    });
   }
 
   async getForYou(userId: string, query: ExploreQueryDto) {
