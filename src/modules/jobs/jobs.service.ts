@@ -18,7 +18,10 @@ import { Queue } from 'bullmq';
 import { VIDEO_QUEUE } from 'src/common/constants';
 import { StorageService } from 'src/infra/storage/storage.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
-import { JobEventsService, type JobSnapshotPayload } from './job-events.service';
+import {
+  JobEventsService,
+  type JobSnapshotPayload,
+} from './job-events.service';
 import { CreateVideoJobDto } from './dto/create-job.dto';
 import {
   isProOnlyPreset,
@@ -111,7 +114,10 @@ export class JobsService {
         throw new NotFoundException('User not found');
       }
 
-      const effectiveRole = this.resolveEffectiveRole(user.role, user.proExpiresAt);
+      const effectiveRole = this.resolveEffectiveRole(
+        user.role,
+        user.proExpiresAt,
+      );
 
       if (user.role !== effectiveRole) {
         await tx.user.update({
@@ -123,7 +129,11 @@ export class JobsService {
         });
       }
 
-      if (isProOnlyPreset(preset.id) && effectiveRole !== UserRole.PRO && effectiveRole !== UserRole.ADMIN) {
+      if (
+        isProOnlyPreset(preset.id) &&
+        effectiveRole !== UserRole.PRO &&
+        effectiveRole !== UserRole.ADMIN
+      ) {
         throw new ForbiddenException(
           'This preset is available for PRO users only.',
         );
@@ -241,6 +251,7 @@ export class JobsService {
             ...inputAssetMetadata,
             presetId: preset.id,
             workflow: executionWorkflow,
+            providerPlan: this.resolveProviderPlan(),
             presetWorkflow: preset.workflow,
             inputMode: executionWorkflow,
             includeBackgroundAudio,
@@ -289,20 +300,21 @@ export class JobsService {
       const message =
         error instanceof Error ? error.message : 'Unknown queue error';
 
-      let failedStatusPayload:
-        | {
-            jobId: string;
-            status: JobStatus;
-            progress: number;
-            errorMessage: string | null;
-            startedAt: string | null;
-            completedAt: string | null;
-            failedAt: string | null;
-            occurredAt: string;
-          }
-        | null = null;
-      let failedLogPayload: { jobId: string; message: string; createdAt: string } | null =
-        null;
+      let failedStatusPayload: {
+        jobId: string;
+        status: JobStatus;
+        progress: number;
+        errorMessage: string | null;
+        startedAt: string | null;
+        completedAt: string | null;
+        failedAt: string | null;
+        occurredAt: string;
+      } | null = null;
+      let failedLogPayload: {
+        jobId: string;
+        message: string;
+        createdAt: string;
+      } | null = null;
 
       await this.prisma.$transaction(async (tx) => {
         const failedJob = await tx.generateJob.update({
@@ -349,20 +361,21 @@ export class JobsService {
       );
     }
 
-    let queuedStatusPayload:
-      | {
-          jobId: string;
-          status: JobStatus;
-          progress: number;
-          errorMessage: string | null;
-          startedAt: string | null;
-          completedAt: string | null;
-          failedAt: string | null;
-          occurredAt: string;
-        }
-      | null = null;
-    let queuedLogPayload: { jobId: string; message: string; createdAt: string } | null =
-      null;
+    let queuedStatusPayload: {
+      jobId: string;
+      status: JobStatus;
+      progress: number;
+      errorMessage: string | null;
+      startedAt: string | null;
+      completedAt: string | null;
+      failedAt: string | null;
+      occurredAt: string;
+    } | null = null;
+    let queuedLogPayload: {
+      jobId: string;
+      message: string;
+      createdAt: string;
+    } | null = null;
 
     await this.prisma.$transaction(async (tx) => {
       const queuedJob = await tx.generateJob.update({
@@ -476,9 +489,12 @@ export class JobsService {
           presetId: this.extractPresetId(job.extraConfig),
           tier: this.extractPresetMetadata(job.extraConfig)?.tier ?? null,
           estimatedDurationSeconds:
-            this.extractPresetMetadata(job.extraConfig)?.estimatedDurationSeconds ?? null,
+            this.extractPresetMetadata(job.extraConfig)
+              ?.estimatedDurationSeconds ?? null,
           workflow: this.extractWorkflow(job.extraConfig),
-          includeBackgroundAudio: this.extractIncludeBackgroundAudio(job.extraConfig),
+          includeBackgroundAudio: this.extractIncludeBackgroundAudio(
+            job.extraConfig,
+          ),
           createdAt: job.createdAt,
           updatedAt: job.updatedAt,
           output,
@@ -534,9 +550,12 @@ export class JobsService {
       presetId: this.extractPresetId(job.extraConfig),
       tier: this.extractPresetMetadata(job.extraConfig)?.tier ?? null,
       estimatedDurationSeconds:
-        this.extractPresetMetadata(job.extraConfig)?.estimatedDurationSeconds ?? null,
+        this.extractPresetMetadata(job.extraConfig)?.estimatedDurationSeconds ??
+        null,
       workflow: this.extractWorkflow(job.extraConfig),
-      includeBackgroundAudio: this.extractIncludeBackgroundAudio(job.extraConfig),
+      includeBackgroundAudio: this.extractIncludeBackgroundAudio(
+        job.extraConfig,
+      ),
       creditCost: job.creditCost,
       errorMessage: job.errorMessage,
       createdAt: job.createdAt,
@@ -648,9 +667,12 @@ export class JobsService {
       presetId: this.extractPresetId(job.extraConfig),
       tier: this.extractPresetMetadata(job.extraConfig)?.tier ?? null,
       estimatedDurationSeconds:
-        this.extractPresetMetadata(job.extraConfig)?.estimatedDurationSeconds ?? null,
+        this.extractPresetMetadata(job.extraConfig)?.estimatedDurationSeconds ??
+        null,
       workflow: this.extractWorkflow(job.extraConfig),
-      includeBackgroundAudio: this.extractIncludeBackgroundAudio(job.extraConfig),
+      includeBackgroundAudio: this.extractIncludeBackgroundAudio(
+        job.extraConfig,
+      ),
       assetId: outputAsset.id,
       bucket: latestVersion.bucket,
       objectKey: latestVersion.objectKey,
@@ -725,25 +747,21 @@ export class JobsService {
       }
     }
 
-    let cancelledStatusPayload:
-      | {
-          jobId: string;
-          status: JobStatus;
-          progress: number;
-          errorMessage: string | null;
-          startedAt: string | null;
-          completedAt: string | null;
-          failedAt: string | null;
-          occurredAt: string;
-        }
-      | null = null;
-    let cancelledLogPayload:
-      | {
-          jobId: string;
-          message: string;
-          createdAt: string;
-        }
-      | null = null;
+    let cancelledStatusPayload: {
+      jobId: string;
+      status: JobStatus;
+      progress: number;
+      errorMessage: string | null;
+      startedAt: string | null;
+      completedAt: string | null;
+      failedAt: string | null;
+      occurredAt: string;
+    } | null = null;
+    let cancelledLogPayload: {
+      jobId: string;
+      message: string;
+      createdAt: string;
+    } | null = null;
 
     await this.prisma.$transaction(async (tx) => {
       const cancelledJob = await tx.generateJob.update({
@@ -818,9 +836,12 @@ export class JobsService {
       presetId: this.extractPresetId(job.extraConfig),
       tier: this.extractPresetMetadata(job.extraConfig)?.tier ?? null,
       estimatedDurationSeconds:
-        this.extractPresetMetadata(job.extraConfig)?.estimatedDurationSeconds ?? null,
+        this.extractPresetMetadata(job.extraConfig)?.estimatedDurationSeconds ??
+        null,
       workflow: this.extractWorkflow(job.extraConfig),
-      includeBackgroundAudio: this.extractIncludeBackgroundAudio(job.extraConfig),
+      includeBackgroundAudio: this.extractIncludeBackgroundAudio(
+        job.extraConfig,
+      ),
       createdAt: job.createdAt.toISOString(),
       updatedAt: job.updatedAt.toISOString(),
       startedAt: job.startedAt?.toISOString() ?? null,
@@ -852,7 +873,11 @@ export class JobsService {
     };
   }
 
-  private buildLogPayload(log: { jobId: string; message: string; createdAt: Date }) {
+  private buildLogPayload(log: {
+    jobId: string;
+    message: string;
+    createdAt: Date;
+  }) {
     return {
       jobId: log.jobId,
       message: log.message,
@@ -892,8 +917,14 @@ export class JobsService {
     };
   }
 
-  private extractInputAssetId(extraConfig: Prisma.JsonValue | null): string | null {
-    if (!extraConfig || typeof extraConfig !== 'object' || Array.isArray(extraConfig)) {
+  private extractInputAssetId(
+    extraConfig: Prisma.JsonValue | null,
+  ): string | null {
+    if (
+      !extraConfig ||
+      typeof extraConfig !== 'object' ||
+      Array.isArray(extraConfig)
+    ) {
       return null;
     }
 
@@ -904,7 +935,11 @@ export class JobsService {
   private extractPresetId(
     extraConfig: Prisma.JsonValue | null,
   ): VideoGenerationPresetId | null {
-    if (!extraConfig || typeof extraConfig !== 'object' || Array.isArray(extraConfig)) {
+    if (
+      !extraConfig ||
+      typeof extraConfig !== 'object' ||
+      Array.isArray(extraConfig)
+    ) {
       return null;
     }
 
@@ -917,7 +952,11 @@ export class JobsService {
   private extractWorkflow(
     extraConfig: Prisma.JsonValue | null,
   ): VideoGenerationWorkflow | null {
-    if (!extraConfig || typeof extraConfig !== 'object' || Array.isArray(extraConfig)) {
+    if (
+      !extraConfig ||
+      typeof extraConfig !== 'object' ||
+      Array.isArray(extraConfig)
+    ) {
       return null;
     }
 
@@ -941,17 +980,22 @@ export class JobsService {
   private extractIncludeBackgroundAudio(
     extraConfig: Prisma.JsonValue | null,
   ): boolean {
-    if (!extraConfig || typeof extraConfig !== 'object' || Array.isArray(extraConfig)) {
+    if (
+      !extraConfig ||
+      typeof extraConfig !== 'object' ||
+      Array.isArray(extraConfig)
+    ) {
       return true;
     }
 
-    const maybeAudioFlag = (extraConfig as Record<string, unknown>).includeBackgroundAudio;
+    const maybeAudioFlag = (extraConfig as Record<string, unknown>)
+      .includeBackgroundAudio;
     return typeof maybeAudioFlag === 'boolean' ? maybeAudioFlag : true;
   }
 
   private extractPresetMetadata(extraConfig: Prisma.JsonValue | null) {
     const presetId = this.extractPresetId(extraConfig);
-    return presetId ? VIDEO_GENERATION_PRESETS[presetId] ?? null : null;
+    return presetId ? (VIDEO_GENERATION_PRESETS[presetId] ?? null) : null;
   }
 
   private async resolveInputAssets(job: {
@@ -988,6 +1032,34 @@ export class JobsService {
       month: '2-digit',
       day: '2-digit',
     }).format(date);
+  }
+
+  private resolveProviderPlan(): ReadonlyArray<'vast' | 'modal'> {
+    const primary = this.resolveProviderName(
+      process.env.VIDEO_PROVIDER_PRIMARY,
+      'vast',
+    );
+    const fallback = this.resolveProviderName(
+      process.env.VIDEO_PROVIDER_FALLBACK,
+      'modal',
+    );
+
+    if (primary === fallback) {
+      return [primary];
+    }
+
+    return [primary, fallback];
+  }
+
+  private resolveProviderName(
+    value: string | undefined,
+    fallback: 'vast' | 'modal',
+  ): 'vast' | 'modal' {
+    if (value === 'vast' || value === 'modal') {
+      return value;
+    }
+
+    return fallback;
   }
 
   private resolveEffectiveRole(

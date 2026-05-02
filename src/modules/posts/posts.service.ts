@@ -13,6 +13,7 @@ import { createHash } from 'crypto';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { REDIS_CLIENT } from 'src/common/constants';
 import { ExploreService } from '../explore/explore.service';
+import { StorageService } from 'src/infra/storage/storage.service';
 
 const POST_WITH_MEDIA_INCLUDE = {
   user: {
@@ -25,6 +26,7 @@ const POST_WITH_MEDIA_INCLUDE = {
     select: {
       id: true,
       fileUrl: true,
+      objectKey: true,
       metadata: true,
       mimeType: true,
       asset: {
@@ -48,6 +50,7 @@ const POST_WITH_MEDIA_INCLUDE = {
                     take: 1,
                     select: {
                       fileUrl: true,
+                      objectKey: true,
                     },
                   },
                 },
@@ -73,6 +76,7 @@ type PersistedPostInput = Pick<
 export class PostsService {
   constructor(
     private readonly prismaService: PrismaService,
+    private readonly storageService: StorageService,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
     private readonly exploreService: ExploreService,
   ) {}
@@ -96,7 +100,7 @@ export class PostsService {
       .findMany({
         include: POST_WITH_MEDIA_INCLUDE,
       })
-      .then((posts) => posts.map((post) => this.serializePost(post)));
+      .then((posts) => Promise.all(posts.map((post) => this.serializePost(post))));
   }
 
   findOne(id: string) {
@@ -214,20 +218,46 @@ export class PostsService {
   `;
   }
 
-  private serializePost(post: PostWithMediaRelations | null) {
+  private async serializePost(post: PostWithMediaRelations | null) {
     if (!post) return null;
 
+    const thumbnailVersion = post.assetVersion.asset.job?.assets[0]?.versions[0];
     const thumbnailUrl =
-      post.assetVersion.asset.job?.assets[0]?.versions[0]?.fileUrl ??
-      (post.assetVersion.asset.type === 'IMAGE' ? post.assetVersion.fileUrl : null);
+      (await this.resolveAssetUrl(
+        thumbnailVersion?.objectKey,
+        thumbnailVersion?.fileUrl,
+      )) ??
+      (post.assetVersion.asset.type === 'IMAGE'
+        ? await this.resolveAssetUrl(
+            post.assetVersion.objectKey,
+            post.assetVersion.fileUrl,
+          )
+        : null);
     const videoUrl =
-      post.assetVersion.asset.type === 'VIDEO' ? post.assetVersion.fileUrl : null;
+      post.assetVersion.asset.type === 'VIDEO'
+        ? await this.resolveAssetUrl(
+            post.assetVersion.objectKey,
+            post.assetVersion.fileUrl,
+          )
+        : null;
 
     return {
       ...post,
       thumbnailUrl,
       videoUrl,
     };
+  }
+
+  private async resolveAssetUrl(
+    objectKey?: string | null,
+    fileUrl?: string | null,
+  ) {
+    if (objectKey) {
+      const signed = await this.storageService.getDownloadSignedUrl(objectKey);
+      return signed.url;
+    }
+
+    return fileUrl ?? null;
   }
 
   private pickCreatePostData(dto: CreatePostDto): PersistedPostInput {

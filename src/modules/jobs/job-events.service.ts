@@ -1,9 +1,4 @@
-import {
-  Inject,
-  Injectable,
-  Logger,
-  OnModuleDestroy,
-} from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { JobStatus } from '@prisma/client';
 import Redis from 'ioredis';
 import { Observable, Subject } from 'rxjs';
@@ -46,12 +41,18 @@ export type JobStatusPayload = {
   completedAt: string | null;
   failedAt: string | null;
   occurredAt: string;
+  provider?: string | null;
+  providerAttempt?: number | null;
+  fallbackTriggered?: boolean;
 };
 
 export type JobLogPayload = {
   jobId: string;
   message: string;
   createdAt: string;
+  provider?: string | null;
+  providerAttempt?: number | null;
+  fallbackTriggered?: boolean;
 };
 
 export type JobHeartbeatPayload = {
@@ -78,9 +79,7 @@ export class JobEventsService implements OnModuleDestroy {
   private publisher?: Redis;
   private subscriber?: Redis;
 
-  constructor(
-    @Inject(REDIS_CLIENT) private readonly redis: Redis,
-  ) {}
+  constructor(@Inject(REDIS_CLIENT) private readonly redis: Redis) {}
 
   stream(jobId: string): Observable<JobStreamEvent> {
     return new Observable<JobStreamEvent>((subscriber) => {
@@ -186,7 +185,9 @@ export class JobEventsService implements OnModuleDestroy {
       }
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : 'Unknown Redis unsubscribe error';
+        error instanceof Error
+          ? error.message
+          : 'Unknown Redis unsubscribe error';
       this.logger.error(
         `Failed to unsubscribe Redis channel for ${jobId}: ${message}`,
       );
@@ -228,7 +229,10 @@ export class JobEventsService implements OnModuleDestroy {
     return this.subscriber;
   }
 
-  private readonly handleRedisMessage = (channelName: string, message: string) => {
+  private readonly handleRedisMessage = (
+    channelName: string,
+    message: string,
+  ) => {
     const jobId = this.getJobIdFromChannel(channelName);
     if (!jobId) {
       return;
