@@ -1,6 +1,7 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
+import { AxiosLikeError, ProviderRequestError } from './provider-error.types';
 
 const LTX_PREVIEW_MODEL_NAME = 'ltx-video-i2v-preview';
 const LTX_PREVIEW_PRESET_ID = 'preview_ltx_i2v';
@@ -11,20 +12,6 @@ const WAN_STANDARD_PRESET_ID = 'standard_wan22_ti2v';
 const WAN_STANDARD_8S_PRESET_ID = 'standard_wan22_ti2v_8s';
 const HUNYUAN_QUALITY_MODEL_NAME = 'hunyuan-video-i2v-quality';
 const HUNYUAN_QUALITY_PRESET_ID = 'quality_hunyuan_i2v';
-
-type ModalRequestError = Error & {
-  statusCode?: number;
-  responseBody?: string;
-  retryable?: boolean;
-};
-
-type AxiosLikeError = Error & {
-  isAxiosError?: boolean;
-  response?: {
-    status?: number;
-    data?: unknown;
-  };
-};
 
 @Injectable()
 export class ModalService {
@@ -62,10 +49,7 @@ export class ModalService {
       return this.getRequiredEnv('MODAL_GENERATE_VIDEO_HUNYUAN_URL');
     }
 
-    if (
-      payload.presetId === undefined &&
-      payload.modelName === undefined
-    ) {
+    if (payload.presetId === undefined && payload.modelName === undefined) {
       return this.getRequiredEnv('MODAL_GENERATE_VIDEO_URL');
     }
 
@@ -89,9 +73,7 @@ export class ModalService {
       return 20 * 60 * 1000;
     }
 
-    if (
-      payload.presetId === WAN_STANDARD_8S_PRESET_ID
-    ) {
+    if (payload.presetId === WAN_STANDARD_8S_PRESET_ID) {
       return 60 * 60 * 1000;
     }
 
@@ -141,8 +123,14 @@ export class ModalService {
         }),
       );
       console.log('Modal API Response Status:', res.status);
-      console.log('Modal API Response Headers:', JSON.stringify(res.headers, null, 2));
-      console.log('Modal API Response Data:', JSON.stringify(res.data, null, 2));
+      console.log(
+        'Modal API Response Headers:',
+        JSON.stringify(res.headers, null, 2),
+      );
+      console.log(
+        'Modal API Response Data:',
+        JSON.stringify(res.data, null, 2),
+      );
       return res.data;
     } catch (error) {
       console.error('Modal API Error:', error);
@@ -156,7 +144,7 @@ export class ModalService {
         const message = statusCode
           ? `Modal request failed with status ${statusCode}: ${responseBody}`
           : axiosLikeError.message;
-        const modalError = new Error(message) as ModalRequestError;
+        const modalError = new Error(message) as ProviderRequestError;
         modalError.statusCode = statusCode;
         modalError.responseBody = responseBody;
         modalError.retryable = this.isRetryableModalError(
@@ -174,7 +162,7 @@ export class ModalService {
   //   console.log('getVideoBuffer input type:', typeof modalRes);
   //   console.log('getVideoBuffer input keys:', Object.keys(modalRes || {}));
   //   console.log('getVideoBuffer full input:', JSON.stringify(modalRes, null, 2));
-    
+
   //   // Try base64 encoding
   //   if (modalRes?.video_base64) {
   //     console.log('Found video_base64, converting to buffer...');
@@ -182,7 +170,7 @@ export class ModalService {
   //     console.log('Buffer size:', buffer.length, 'bytes');
   //     return buffer;
   //   }
-    
+
   //   // Try video URL
   //   if (modalRes?.video_url) {
   //     console.log('Found video_url, downloading from:', modalRes.video_url);
@@ -201,13 +189,13 @@ export class ModalService {
   //       throw downloadError;
   //     }
   //   }
-    
+
   //   // Fallback: check for nested data property
   //   if (modalRes?.data?.video_base64) {
   //     console.log('Found video_base64 in nested data, converting to buffer...');
   //     return Buffer.from(modalRes.data.video_base64, 'base64');
   //   }
-    
+
   //   if (modalRes?.data?.video_url) {
   //     console.log('Found video_url in nested data, downloading from:', modalRes.data.video_url);
   //     const dl = await firstValueFrom(
@@ -218,7 +206,7 @@ export class ModalService {
   //     );
   //     return Buffer.from(dl.data);
   //   }
-    
+
   //   const availableKeys = Object.keys(modalRes || {}).join(', ');
 
   //   // Special case: Modal function run response (ack only) that needs post-processing
@@ -234,7 +222,7 @@ export class ModalService {
   //   throw new Error(errorMsg);
   // }
 
-    async getVideoBuffer(modalRes: any): Promise<Buffer> {
+  async getVideoBuffer(modalRes: any): Promise<Buffer> {
     const videoBase64 =
       modalRes?.video_base64 ??
       modalRes?.result?.video_base64 ??
@@ -266,7 +254,7 @@ export class ModalService {
     }
 
     throw new Error(
-      `Modal returned no video. Full response: ${JSON.stringify(modalRes)}`
+      `Modal returned no video. Full response: ${JSON.stringify(modalRes)}`,
     );
   }
 

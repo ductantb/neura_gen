@@ -10,6 +10,10 @@ describe('PostsService', () => {
     },
   };
 
+  const storageService = {
+    getDownloadSignedUrl: jest.fn(),
+  };
+
   const redis = {
     set: jest.fn(),
     hincrby: jest.fn(),
@@ -28,6 +32,7 @@ describe('PostsService', () => {
     jest.clearAllMocks();
     service = new PostsService(
       prismaService as any,
+      storageService as any,
       redis as any,
       exploreService as any,
     );
@@ -39,7 +44,8 @@ describe('PostsService', () => {
       assetVersionId: 'version-1',
       assetVersion: {
         id: 'version-1',
-        fileUrl: 'https://cdn.example/video.mp4',
+        fileUrl: null,
+        objectKey: 'jobs/job-1/output/video.mp4',
         mimeType: 'video/mp4',
         metadata: {},
         asset: {
@@ -49,7 +55,8 @@ describe('PostsService', () => {
               {
                 versions: [
                   {
-                    fileUrl: 'https://cdn.example/thumb.jpg',
+                    fileUrl: null,
+                    objectKey: 'jobs/job-1/output/thumb.jpg',
                   },
                 ],
               },
@@ -62,23 +69,33 @@ describe('PostsService', () => {
         username: 'alice',
       },
     });
+    storageService.getDownloadSignedUrl
+      .mockResolvedValueOnce({
+        url: 'https://signed.example/thumb.jpg',
+        expiresIn: 3600,
+      })
+      .mockResolvedValueOnce({
+        url: 'https://signed.example/video.mp4',
+        expiresIn: 3600,
+      });
 
     const post = await service.findOne('post-1');
 
     expect(post).toMatchObject({
       id: 'post-1',
-      videoUrl: 'https://cdn.example/video.mp4',
-      thumbnailUrl: 'https://cdn.example/thumb.jpg',
+      videoUrl: 'https://signed.example/video.mp4',
+      thumbnailUrl: 'https://signed.example/thumb.jpg',
     });
   });
 
-  it('falls back to the assetVersion fileUrl as thumbnailUrl for image posts', async () => {
+  it('falls back to the assetVersion objectKey as thumbnailUrl for image posts', async () => {
     prismaService.post.findUnique.mockResolvedValue({
       id: 'post-2',
       assetVersionId: 'version-2',
       assetVersion: {
         id: 'version-2',
-        fileUrl: 'https://cdn.example/image.png',
+        fileUrl: null,
+        objectKey: 'users/user-1/uploads/image.png',
         mimeType: 'image/png',
         metadata: {},
         asset: {
@@ -91,13 +108,17 @@ describe('PostsService', () => {
         username: 'alice',
       },
     });
+    storageService.getDownloadSignedUrl.mockResolvedValueOnce({
+      url: 'https://signed.example/image.png',
+      expiresIn: 3600,
+    });
 
     const post = await service.findOne('post-2');
 
     expect(post).toMatchObject({
       id: 'post-2',
       videoUrl: null,
-      thumbnailUrl: 'https://cdn.example/image.png',
+      thumbnailUrl: 'https://signed.example/image.png',
     });
   });
 
@@ -110,7 +131,8 @@ describe('PostsService', () => {
       assetVersionId: 'version-3',
       assetVersion: {
         id: 'version-3',
-        fileUrl: 'https://cdn.example/video.mp4',
+        fileUrl: null,
+        objectKey: 'jobs/job-3/output/video.mp4',
         mimeType: 'video/mp4',
         metadata: {},
         asset: {
@@ -124,6 +146,10 @@ describe('PostsService', () => {
         id: 'user-1',
         username: 'alice',
       },
+    });
+    storageService.getDownloadSignedUrl.mockResolvedValue({
+      url: 'https://signed.example/video.mp4',
+      expiresIn: 3600,
     });
 
     await service.create('user-1', {

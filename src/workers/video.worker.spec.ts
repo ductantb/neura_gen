@@ -36,6 +36,13 @@ describe('VideoWorker', () => {
     getVideoBuffer: jest.fn(),
   };
 
+  const vast = {
+    isEnabled: jest.fn(),
+    healthcheck: jest.fn(),
+    generateVideo: jest.fn(),
+    getVideoBuffer: jest.fn(),
+  };
+
   const storageService = {
     getDownloadSignedUrl: jest.fn(),
     upload: jest.fn(),
@@ -61,9 +68,13 @@ describe('VideoWorker', () => {
     worker = new VideoWorker(
       prisma as any,
       modal as any,
+      vast as any,
       storageService as any,
       jobEvents as unknown as JobEventsService,
     );
+
+    vast.isEnabled.mockReturnValue(false);
+    vast.healthcheck.mockResolvedValue(false);
 
     prisma.generateJob.findUnique.mockResolvedValue({
       id: 'job-1',

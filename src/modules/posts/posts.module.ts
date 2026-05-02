@@ -5,6 +5,7 @@ import { CommentsModule } from '../comments/comments.module';
 import { RouterModule } from '@nestjs/core';
 import { PostLikesModule } from '../post-likes/post-likes.module';
 import { ExploreModule } from '../explore/explore.module';
+import { StorageModule } from 'src/infra/storage/storage.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { ExploreModule } from '../explore/explore.module';
     CommentsModule,
     PostLikesModule,
     ExploreModule,
+    StorageModule,
   ],
   controllers: [PostsController],
   providers: [PostsService],

@@ -18,6 +18,7 @@ import { WorkersModule } from './workers/workers.module';
 import { QueueModule } from './infra/queue/queue.module';
 import { StorageModule } from './infra/storage/storage.module';
 import { BillingModule } from './modules/billing/billing.module';
+import { FollowsModule } from './modules/follows/follows.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { BillingModule } from './modules/billing/billing.module';
     WorkersModule,
     StorageModule,
     BillingModule,
+    FollowsModule,
   ],
   providers: [
     {

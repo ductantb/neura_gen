@@ -12,8 +12,10 @@ import { StorageService } from 'src/infra/storage/storage.service';
 import { PrismaService } from 'src/infra/prisma/prisma.service';
 import { JobEventsService } from 'src/modules/jobs/job-events.service';
 import { ModalService } from 'src/modules/modal/modal.service';
+import { VastService } from 'src/modules/modal/vast.service';
 import { generateThumbnailFromVideoBuffer } from 'src/utils/video-thumbnail.util';
 import { addBackgroundAudioToVideoBuffer } from 'src/utils/video-background-audio.util';
+import type { ProviderRequestError } from 'src/modules/modal/provider-error.types';
 
 // Custom error to distinguish cancellation from normal errors
 class JobCancelledError extends Error {
@@ -23,20 +25,42 @@ class JobCancelledError extends Error {
   }
 }
 
+type VideoProviderName = 'vast' | 'modal';
+
+type ProviderExecutionResult = {
+  provider: VideoProviderName;
+  response: unknown;
+  providerAttempt: number;
+  fallbackTriggered: boolean;
+};
+
 @Injectable()
 export class VideoWorker implements OnModuleDestroy {
   private worker?: Worker;
+  private vastBreakerOpenedUntilMs = 0;
+  private vastFailureTimestampsMs: number[] = [];
+  private vastConsecutiveFailures = 0;
+  private vastHalfOpenSuccessCount = 0;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly modal: ModalService,
+    private readonly vast: VastService,
     private readonly storageService: StorageService,
     private readonly jobEvents: JobEventsService,
   ) {}
 
   // create job log
   // Purpose: Save a log message related to a job into DB
-  private async log(jobId: string, message: string) {
+  private async log(
+    jobId: string,
+    message: string,
+    extra?: Partial<{
+      provider: string | null;
+      providerAttempt: number | null;
+      fallbackTriggered: boolean;
+    }>,
+  ) {
     const logEntry = await this.prisma.jobLog.create({
       data: { jobId, message },
     });
@@ -45,6 +69,9 @@ export class VideoWorker implements OnModuleDestroy {
       jobId,
       message,
       createdAt: logEntry.createdAt.toISOString(),
+      provider: extra?.provider ?? null,
+      providerAttempt: extra?.providerAttempt ?? null,
+      fallbackTriggered: extra?.fallbackTriggered ?? false,
     });
   }
 
@@ -60,16 +87,35 @@ export class VideoWorker implements OnModuleDestroy {
       startedAt: Date;
       completedAt: Date;
       failedAt: Date;
+      provider: string | null;
+      providerAttempt: number | null;
+      fallbackTriggered: boolean;
     }>,
   ) {
+    const updateData: Prisma.GenerateJobUpdateInput = {
+      status,
+      progress,
+    };
+
+    if (extra?.errorMessage !== undefined) {
+      updateData.errorMessage = extra.errorMessage;
+    }
+    if (extra?.startedAt !== undefined) {
+      updateData.startedAt = extra.startedAt;
+    }
+    if (extra?.completedAt !== undefined) {
+      updateData.completedAt = extra.completedAt;
+    }
+    if (extra?.failedAt !== undefined) {
+      updateData.failedAt = extra.failedAt;
+    }
+    if (extra?.provider !== undefined) {
+      updateData.provider = extra.provider;
+    }
+
     const updatedJob = await this.prisma.generateJob.update({
       where: { id: jobId },
-      data: {
-        status,
-        progress,
-        // Spread extra fields if provided (timestamps, error message)
-        ...(extra ? extra : {}),
-      },
+      data: updateData,
     });
 
     this.jobEvents.emitStatus({
@@ -81,6 +127,9 @@ export class VideoWorker implements OnModuleDestroy {
       completedAt: updatedJob.completedAt?.toISOString() ?? null,
       failedAt: updatedJob.failedAt?.toISOString() ?? null,
       occurredAt: updatedJob.updatedAt.toISOString(),
+      provider: extra?.provider ?? updatedJob.provider ?? null,
+      providerAttempt: extra?.providerAttempt ?? null,
+      fallbackTriggered: extra?.fallbackTriggered ?? false,
     });
   }
 
@@ -119,7 +168,10 @@ export class VideoWorker implements OnModuleDestroy {
       where: { id: jobId },
     });
     if (!job) return;
-    if (job.status === JobStatus.CANCELLED || job.status === JobStatus.COMPLETED) {
+    if (
+      job.status === JobStatus.CANCELLED ||
+      job.status === JobStatus.COMPLETED
+    ) {
       return;
     }
 
@@ -138,6 +190,9 @@ export class VideoWorker implements OnModuleDestroy {
         startedAt: Date;
         completedAt: Date;
         failedAt: Date;
+        provider: string | null;
+        providerAttempt: number | null;
+        fallbackTriggered: boolean;
       }>,
     ) => {
       currentProgress = progress;
@@ -146,7 +201,10 @@ export class VideoWorker implements OnModuleDestroy {
 
     try {
       // Check cancellation before starting
-      await this.ensureJobNotCancelled(jobId, 'Job cancelled before processing started');
+      await this.ensureJobNotCancelled(
+        jobId,
+        'Job cancelled before processing started',
+      );
 
       // Cleanup old outputs (important for retries)
       await this.cleanupOutputArtifacts(jobId);
@@ -159,7 +217,10 @@ export class VideoWorker implements OnModuleDestroy {
 
       // Resolve optional input asset (image). TI2V jobs can run without it.
       const workflow = this.resolveExecutionWorkflow(job.extraConfig);
-      const presetId = this.extractExtraConfigString(job.extraConfig, 'presetId');
+      const presetId = this.extractExtraConfigString(
+        job.extraConfig,
+        'presetId',
+      );
       const requiresInputImage = workflow === 'I2V';
       const inputAsset = await this.resolveInputAsset(job);
 
@@ -187,45 +248,84 @@ export class VideoWorker implements OnModuleDestroy {
       await setStatus(JobStatus.PROCESSING, 30);
 
       // Check cancellation before calling AI
-      await this.ensureJobNotCancelled(jobId, 'Job cancelled before provider request');
+      await this.ensureJobNotCancelled(
+        jobId,
+        'Job cancelled before provider request',
+      );
 
-      const modalResponse = await this.modal.generateVideo({
+      const providerPlan = this.resolveProviderPlan(
+        this.extractProviderPlan(job.extraConfig),
+      );
+      const providerPayload = {
         prompt: job.prompt,
         negativePrompt: job.negativePrompt ?? undefined,
         inputImageUrl: signedInputUrl,
         jobId: job.id,
-        provider: job.provider ?? undefined,
         modelName: job.modelName ?? undefined,
         presetId: presetId ?? undefined,
         userId: job.userId,
         workflow: workflow ?? undefined,
+      };
+
+      const providerExecution = await this.executeProviderPlan(
+        providerPlan,
+        providerPayload,
+      );
+
+      await this.log(
+        jobId,
+        `Provider ${providerExecution.provider} succeeded on attempt ${providerExecution.providerAttempt}`,
+        {
+          provider: providerExecution.provider,
+          providerAttempt: providerExecution.providerAttempt,
+          fallbackTriggered: providerExecution.fallbackTriggered,
+        },
+      );
+
+      await setStatus(JobStatus.PROCESSING, 60, {
+        provider: providerExecution.provider,
+        providerAttempt: providerExecution.providerAttempt,
+        fallbackTriggered: providerExecution.fallbackTriggered,
       });
 
-      await setStatus(JobStatus.PROCESSING, 60);
-
       // Check cancellation after AI response
-      await this.ensureJobNotCancelled(jobId, 'Job cancelled after provider response');
+      await this.ensureJobNotCancelled(
+        jobId,
+        'Job cancelled after provider response',
+      );
 
       // Convert response to video buffer
-      const videoBuffer = await this.modal.getVideoBuffer(modalResponse);
+      const videoBuffer = await this.getVideoBufferFromProvider(
+        providerExecution.provider,
+        providerExecution.response,
+      );
       let outputVideoBuffer = videoBuffer;
       const shouldAttachBackgroundAudio = this.shouldAttachBackgroundAudio(
         job.extraConfig,
       );
 
-      await setStatus(JobStatus.PROCESSING, 80);
+      await setStatus(JobStatus.PROCESSING, 80, {
+        provider: providerExecution.provider,
+        providerAttempt: providerExecution.providerAttempt,
+        fallbackTriggered: providerExecution.fallbackTriggered,
+      });
 
       if (shouldAttachBackgroundAudio) {
         try {
           await this.log(jobId, 'Adding background audio');
-          outputVideoBuffer = await addBackgroundAudioToVideoBuffer(videoBuffer, {
-            prompt: job.prompt,
-            seed: job.id,
-          });
+          outputVideoBuffer = await addBackgroundAudioToVideoBuffer(
+            videoBuffer,
+            {
+              prompt: job.prompt,
+              seed: job.id,
+            },
+          );
           await this.log(jobId, 'Background audio added');
         } catch (error) {
           const message =
-            error instanceof Error ? error.message : 'Unknown audio merge error';
+            error instanceof Error
+              ? error.message
+              : 'Unknown audio merge error';
           await this.log(
             jobId,
             `Background audio skipped due to error: ${message}`,
@@ -234,7 +334,10 @@ export class VideoWorker implements OnModuleDestroy {
       }
 
       // Check cancellation before upload
-      await this.ensureJobNotCancelled(jobId, 'Job cancelled before uploading outputs');
+      await this.ensureJobNotCancelled(
+        jobId,
+        'Job cancelled before uploading outputs',
+      );
 
       // Upload video
       const uploadResult = await this.storageService.upload({
@@ -284,14 +387,15 @@ export class VideoWorker implements OnModuleDestroy {
             modelName: job.modelName,
             sourceJobId: job.id,
             ...(inputAsset ? { sourceInputAssetId: inputAsset.id } : {}),
-            provider: 'modal',
+            provider: providerExecution.provider,
             backgroundAudio: shouldAttachBackgroundAudio,
           },
         },
       });
 
       // Generate thumbnail
-      const thumbnailBuffer = await generateThumbnailFromVideoBuffer(outputVideoBuffer);
+      const thumbnailBuffer =
+        await generateThumbnailFromVideoBuffer(outputVideoBuffer);
 
       // Upload thumbnail
       const thumbnailUploadResult = await this.storageService.upload({
@@ -334,7 +438,7 @@ export class VideoWorker implements OnModuleDestroy {
           metadata: {
             sourceJobId: job.id,
             ...(inputAsset ? { sourceInputAssetId: inputAsset.id } : {}),
-            provider: 'modal',
+            provider: providerExecution.provider,
             kind: 'video-thumbnail',
           },
         },
@@ -343,6 +447,9 @@ export class VideoWorker implements OnModuleDestroy {
       // Mark completed
       await setStatus(JobStatus.COMPLETED, 100, {
         completedAt: new Date(),
+        provider: providerExecution.provider,
+        providerAttempt: providerExecution.providerAttempt,
+        fallbackTriggered: providerExecution.fallbackTriggered,
       });
 
       return {
@@ -368,7 +475,8 @@ export class VideoWorker implements OnModuleDestroy {
       // Retry logic
       const maxAttempts = bullJob.opts.attempts ?? 1;
       const isRetryable = this.isRetryableProviderError(err);
-      const isFinalAttempt = !isRetryable || bullJob.attemptsMade + 1 >= maxAttempts;
+      const isFinalAttempt =
+        !isRetryable || bullJob.attemptsMade + 1 >= maxAttempts;
 
       if (!isFinalAttempt) {
         await setStatus(JobStatus.QUEUED, Math.max(currentProgress, 1), {
@@ -409,7 +517,318 @@ export class VideoWorker implements OnModuleDestroy {
     return raw.toLowerCase() !== 'false';
   }
 
-  private shouldAttachBackgroundAudio(extraConfig: Prisma.JsonValue | null): boolean {
+  private async executeProviderPlan(
+    providerPlan: VideoProviderName[],
+    payload: {
+      prompt: string;
+      negativePrompt?: string;
+      inputImageUrl?: string;
+      jobId: string;
+      modelName?: string;
+      presetId?: string;
+      userId?: string;
+      workflow?: string;
+    },
+  ): Promise<ProviderExecutionResult> {
+    let lastRetryableError: unknown = null;
+    let hasFallback = false;
+
+    for (const provider of providerPlan) {
+      if (provider === 'vast' && !(await this.shouldUseVastProvider())) {
+        continue;
+      }
+
+      const maxRetries = this.resolveProviderMaxRetries(provider);
+      for (let retryIndex = 0; retryIndex <= maxRetries; retryIndex += 1) {
+        const providerAttempt = retryIndex + 1;
+        try {
+          await this.log(
+            payload.jobId,
+            `Calling provider ${provider} (attempt ${providerAttempt}/${maxRetries + 1})`,
+            {
+              provider,
+              providerAttempt,
+              fallbackTriggered: hasFallback,
+            },
+          );
+
+          const response = await this.callProvider(provider, {
+            ...payload,
+            provider,
+          });
+
+          if (provider === 'vast') {
+            this.recordVastSuccess();
+          }
+
+          return {
+            provider,
+            response,
+            providerAttempt,
+            fallbackTriggered: hasFallback,
+          };
+        } catch (error) {
+          const providerError = error as ProviderRequestError;
+          const isRetryable = this.isRetryableProviderError(error);
+
+          if (provider === 'vast') {
+            this.recordVastFailure(providerError);
+          }
+
+          if (!isRetryable) {
+            throw error;
+          }
+
+          if (retryIndex < maxRetries) {
+            await this.log(
+              payload.jobId,
+              `Provider ${provider} attempt ${providerAttempt} failed, retrying: ${providerError.message}`,
+              {
+                provider,
+                providerAttempt,
+                fallbackTriggered: hasFallback,
+              },
+            );
+            continue;
+          }
+
+          lastRetryableError = error;
+          hasFallback = true;
+          await this.log(
+            payload.jobId,
+            `Provider ${provider} exhausted retries, switching to fallback if available: ${providerError.message}`,
+            {
+              provider,
+              providerAttempt,
+              fallbackTriggered: true,
+            },
+          );
+          break;
+        }
+      }
+    }
+
+    if (lastRetryableError) {
+      throw lastRetryableError;
+    }
+
+    throw new Error('No provider is currently available');
+  }
+
+  private async callProvider(
+    provider: VideoProviderName,
+    payload: {
+      prompt: string;
+      negativePrompt?: string;
+      inputImageUrl?: string;
+      jobId: string;
+      provider: string;
+      modelName?: string;
+      presetId?: string;
+      userId?: string;
+      workflow?: string;
+    },
+  ) {
+    if (provider === 'vast') {
+      return this.vast.generateVideo(payload);
+    }
+
+    return this.modal.generateVideo(payload);
+  }
+
+  private async getVideoBufferFromProvider(
+    provider: VideoProviderName,
+    response: unknown,
+  ) {
+    if (provider === 'vast') {
+      return this.vast.getVideoBuffer(response);
+    }
+
+    return this.modal.getVideoBuffer(response);
+  }
+
+  private extractProviderPlan(
+    extraConfig: Prisma.JsonValue | null,
+  ): VideoProviderName[] {
+    if (
+      !extraConfig ||
+      typeof extraConfig !== 'object' ||
+      Array.isArray(extraConfig)
+    ) {
+      return [];
+    }
+
+    const raw = (extraConfig as Record<string, unknown>).providerPlan;
+    if (!Array.isArray(raw)) {
+      return [];
+    }
+
+    const filtered = raw.filter(
+      (provider): provider is VideoProviderName =>
+        provider === 'vast' || provider === 'modal',
+    );
+
+    return filtered;
+  }
+
+  private resolveProviderPlan(
+    jobPlan: VideoProviderName[],
+  ): VideoProviderName[] {
+    if (jobPlan.length > 0) {
+      return [...new Set(jobPlan)];
+    }
+
+    const primary = this.resolveProviderName(
+      process.env.VIDEO_PROVIDER_PRIMARY,
+      'vast',
+    );
+    const fallback = this.resolveProviderName(
+      process.env.VIDEO_PROVIDER_FALLBACK,
+      'modal',
+    );
+
+    if (primary === fallback) {
+      return [primary];
+    }
+
+    return [primary, fallback];
+  }
+
+  private resolveProviderName(
+    raw: string | undefined,
+    fallback: VideoProviderName,
+  ): VideoProviderName {
+    if (raw === 'vast' || raw === 'modal') {
+      return raw;
+    }
+
+    return fallback;
+  }
+
+  private resolveProviderMaxRetries(provider: VideoProviderName) {
+    const raw =
+      provider === 'vast'
+        ? process.env.VAST_MAX_RETRIES
+        : process.env.MODAL_MAX_RETRIES;
+    const parsed = Number(raw ?? 1);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      return 1;
+    }
+
+    return Math.floor(parsed);
+  }
+
+  private async shouldUseVastProvider() {
+    if (!this.vast.isEnabled()) {
+      return false;
+    }
+
+    const now = Date.now();
+    if (now < this.vastBreakerOpenedUntilMs) {
+      return false;
+    }
+
+    const healthy = await this.vast.healthcheck();
+    if (!healthy) {
+      this.openVastBreaker(now);
+      return false;
+    }
+
+    return true;
+  }
+
+  private recordVastSuccess() {
+    if (
+      this.vastBreakerOpenedUntilMs > 0 &&
+      Date.now() >= this.vastBreakerOpenedUntilMs
+    ) {
+      this.vastHalfOpenSuccessCount += 1;
+      const required = this.resolveVastHalfOpenSuccess();
+      if (this.vastHalfOpenSuccessCount >= required) {
+        this.resetVastBreaker();
+      }
+      return;
+    }
+
+    this.vastConsecutiveFailures = 0;
+  }
+
+  private recordVastFailure(error: ProviderRequestError) {
+    const errorType = error.errorType ?? this.inferProviderErrorType(error);
+    if (
+      errorType !== 'TRANSIENT_INFRA' &&
+      errorType !== 'TRANSIENT_TIMEOUT' &&
+      errorType !== 'TRANSIENT_OOM'
+    ) {
+      return;
+    }
+
+    const now = Date.now();
+    const windowMs = this.resolveVastBreakerWindowMs();
+    this.vastFailureTimestampsMs = this.vastFailureTimestampsMs.filter(
+      (timestampMs) => now - timestampMs <= windowMs,
+    );
+    this.vastFailureTimestampsMs.push(now);
+    this.vastConsecutiveFailures += 1;
+
+    const threshold = this.resolveVastBreakerFailureThreshold();
+    if (this.vastConsecutiveFailures >= threshold) {
+      this.openVastBreaker(now);
+    }
+  }
+
+  private resetVastBreaker() {
+    this.vastBreakerOpenedUntilMs = 0;
+    this.vastConsecutiveFailures = 0;
+    this.vastHalfOpenSuccessCount = 0;
+    this.vastFailureTimestampsMs = [];
+  }
+
+  private openVastBreaker(nowMs: number) {
+    this.vastBreakerOpenedUntilMs = nowMs + this.resolveVastBreakerCooldownMs();
+    this.vastConsecutiveFailures = 0;
+    this.vastHalfOpenSuccessCount = 0;
+  }
+
+  private resolveVastBreakerFailureThreshold() {
+    const parsed = Number(process.env.VAST_BREAKER_FAILURE_THRESHOLD ?? 3);
+    if (!Number.isFinite(parsed) || parsed < 1) {
+      return 3;
+    }
+
+    return Math.floor(parsed);
+  }
+
+  private resolveVastBreakerWindowMs() {
+    const parsed = Number(process.env.VAST_BREAKER_WINDOW_SECONDS ?? 300);
+    if (!Number.isFinite(parsed) || parsed < 1) {
+      return 300_000;
+    }
+
+    return Math.floor(parsed * 1000);
+  }
+
+  private resolveVastBreakerCooldownMs() {
+    const parsed = Number(process.env.VAST_BREAKER_COOLDOWN_SECONDS ?? 600);
+    if (!Number.isFinite(parsed) || parsed < 1) {
+      return 600_000;
+    }
+
+    return Math.floor(parsed * 1000);
+  }
+
+  private resolveVastHalfOpenSuccess() {
+    const parsed = Number(process.env.VAST_BREAKER_HALF_OPEN_SUCCESS ?? 3);
+    if (!Number.isFinite(parsed) || parsed < 1) {
+      return 3;
+    }
+
+    return Math.floor(parsed);
+  }
+
+  private shouldAttachBackgroundAudio(
+    extraConfig: Prisma.JsonValue | null,
+  ): boolean {
     if (!this.isBackgroundAudioEnabledGlobally()) {
       return false;
     }
@@ -423,7 +842,9 @@ export class VideoWorker implements OnModuleDestroy {
   }
 
   // extract inputAssetId
-  private extractInputAssetId(extraConfig: Prisma.JsonValue | null): string | null {
+  private extractInputAssetId(
+    extraConfig: Prisma.JsonValue | null,
+  ): string | null {
     return this.extractExtraConfigString(extraConfig, 'inputAssetId');
   }
 
@@ -432,7 +853,11 @@ export class VideoWorker implements OnModuleDestroy {
     extraConfig: Prisma.JsonValue | null,
     key: string,
   ): string | null {
-    if (!extraConfig || typeof extraConfig !== 'object' || Array.isArray(extraConfig)) {
+    if (
+      !extraConfig ||
+      typeof extraConfig !== 'object' ||
+      Array.isArray(extraConfig)
+    ) {
       return null;
     }
 
@@ -445,7 +870,11 @@ export class VideoWorker implements OnModuleDestroy {
     extraConfig: Prisma.JsonValue | null,
     key: string,
   ): boolean | null {
-    if (!extraConfig || typeof extraConfig !== 'object' || Array.isArray(extraConfig)) {
+    if (
+      !extraConfig ||
+      typeof extraConfig !== 'object' ||
+      Array.isArray(extraConfig)
+    ) {
       return null;
     }
 
@@ -474,7 +903,7 @@ export class VideoWorker implements OnModuleDestroy {
       return true;
     }
 
-    const maybeRetryable = (error as { retryable?: unknown }).retryable;
+    const maybeRetryable = (error as ProviderRequestError).retryable;
     if (typeof maybeRetryable === 'boolean') {
       return maybeRetryable;
     }
@@ -484,11 +913,46 @@ export class VideoWorker implements OnModuleDestroy {
       return true;
     }
 
-    if (maybeStatusCode === 408 || maybeStatusCode === 425 || maybeStatusCode >= 500) {
+    if (
+      maybeStatusCode === 408 ||
+      maybeStatusCode === 425 ||
+      maybeStatusCode >= 500 ||
+      maybeStatusCode === 429
+    ) {
       return true;
     }
 
     return false;
+  }
+
+  private inferProviderErrorType(
+    error: ProviderRequestError,
+  ): ProviderRequestError['errorType'] {
+    if (error.errorType) {
+      return error.errorType;
+    }
+
+    const message = (error.message ?? '').toLowerCase();
+    if (
+      message.includes('out of memory') ||
+      message.includes('cuda') ||
+      message.includes('oom')
+    ) {
+      return 'TRANSIENT_OOM';
+    }
+
+    const statusCode = error.statusCode;
+    if (statusCode === undefined || statusCode === 408 || statusCode === 425) {
+      return 'TRANSIENT_TIMEOUT';
+    }
+    if (statusCode >= 500 || statusCode === 429) {
+      return 'TRANSIENT_INFRA';
+    }
+    if (statusCode >= 400) {
+      return 'PERMANENT_INPUT';
+    }
+
+    return 'TRANSIENT_INFRA';
   }
 
   // resolve input asset
