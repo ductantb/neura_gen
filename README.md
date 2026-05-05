@@ -30,6 +30,23 @@ Client -> NestJS API -> PostgreSQL
 
 API và worker là 2 tiến trình riêng. API nhận request và tạo job, worker lấy job từ Redis để xử lý nền.
 
+## Vast Provider Quick Start
+
+Repo da duoc chuan bi san runtime cho Vast (provider `standard`):
+
+- `modal_app/video/vast_server.py`
+- `modal_app/video/requirements-vast.txt`
+- `modal_app/video/Dockerfile.vast`
+- `docs/vastai-setup-checklist.md`
+
+Lam theo checklist:
+
+1. Build + push image Vast
+2. Tao endpoint/workergroup tren Vast
+3. Lay URL `/invoke` va `/health`
+4. Dien vao `.env` (`VAST_GENERATE_VIDEO_URL`, `VAST_HEALTHCHECK_URL`)
+5. Bat `VAST_ENABLED=true` va smoke test
+
 ## Yêu cầu cài đặt
 
 Để chạy được đầy đủ end-to-end, bạn cần:
@@ -110,6 +127,11 @@ PASSWORD_RESET_TOKEN_TTL_MINUTES=15
 GOOGLE_CLIENT_ID=your_google_client_id
 GOOGLE_CLIENT_SECRET=your_google_client_secret
 GOOGLE_CALLBACK_URL=http://localhost:3000/auth/google/callback
+GOOGLE_ALLOWED_AUDIENCES=web_client_id,android_client_id
+OAUTH_STATE_SECRET=replace_with_strong_random_secret
+OAUTH_STATE_EXPIRES_IN=10m
+GOOGLE_AUTH_CODE_TTL_SECONDS=120
+OAUTH_ALLOWED_REDIRECT_URIS=http://localhost:5173/auth/callback,neuragen://auth/callback
 
 # MoMo Payment Gateway
 MOMO_ENDPOINT=https://test-payment.momo.vn
@@ -151,6 +173,10 @@ PAYOS_PARTNER_CODE=optional_partner_code
 - `FRONTEND_URL`: URL frontend dùng để tạo reset link
 - `PASSWORD_RESET_TOKEN_TTL_MINUTES`: thời gian hết hạn token reset password
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL`: cấu hình đăng nhập nhanh bằng Google OAuth2
+- `GOOGLE_ALLOWED_AUDIENCES`: danh sách client IDs được phép dùng để verify Google idToken
+- `OAUTH_STATE_SECRET`, `OAUTH_STATE_EXPIRES_IN`: cấu hình state token cho OAuth redirect flow
+- `GOOGLE_AUTH_CODE_TTL_SECONDS`: TTL auth code one-time ở callback
+- `OAUTH_ALLOWED_REDIRECT_URIS`: redirect allowlist cho web/app callback
 - `MOMO_*`: cấu hình tạo link thanh toán và nhận IPN webhook từ MoMo
 - `PAYOS_*`: cấu hình tạo payment link và verify webhook chữ ký từ payOS
 
@@ -342,6 +368,8 @@ Lưu ý:
 - `POST /auth/forgot-password`
 - `POST /auth/reset-password`
 - `GET /auth/google` (OAuth2 Google login)
+- `POST /auth/google/token` (đăng nhập bằng Google idToken cho Android/Web SDK)
+- `POST /auth/google/exchange-code` (đổi auth code one-time sang JWT nội bộ)
 
 ### 2. Upload ảnh đầu vào
 

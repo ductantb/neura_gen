@@ -1,6 +1,8 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   Logger,
   UnauthorizedException,
@@ -18,6 +20,9 @@ import { User, UserRole } from '@prisma/client';
 import { StringValue } from 'ms';
 import { MailService } from 'src/infra/mail/mail.service';
 import { GoogleProfilePayload } from './strategies/google.strategy';
+import { REDIS_CLIENT } from 'src/common/constants';
+import Redis from 'ioredis';
+import { OAuth2Client, TokenPayload } from 'google-auth-library';
 
 type RefreshTokenPayload = {
   sub: string;
@@ -28,15 +33,24 @@ type RefreshTokenPayload = {
   type: 'refresh';
 };
 
+type GoogleOauthStatePayload = {
+  type: 'google_oauth_state';
+  nonce: string;
+  redirectUri?: string;
+  platform?: string;
+};
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
+  private readonly googleClient = new OAuth2Client();
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly mailService: MailService,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
   async register(email: string, password: string): Promise<AuthResponseDto> {
@@ -146,6 +160,142 @@ export class AuthService {
 
     await this.mailService.sendWelcomeEmail(newUser.email);
     return this.issueTokenPair(newUser);
+  }
+
+  async loginWithGoogleIdToken(
+    idToken: string,
+    platform?: string,
+  ): Promise<AuthResponseDto> {
+    let payload: TokenPayload | undefined;
+
+    try {
+      const ticket = await this.googleClient.verifyIdToken({
+        idToken,
+        audience: this.getGoogleAudiences(),
+      });
+      payload = ticket.getPayload();
+    } catch {
+      throw new UnauthorizedException('Invalid Google ID token');
+    }
+
+    if (!payload?.sub || !payload?.email) {
+      throw new UnauthorizedException('Google ID token payload is invalid');
+    }
+
+    if (payload.email_verified === false) {
+      throw new UnauthorizedException('Google email is not verified');
+    }
+
+    const profile: GoogleProfilePayload = {
+      googleId: payload.sub,
+      email: payload.email,
+      username: payload.name?.trim() || payload.email.split('@')[0],
+      avatarUrl: payload.picture,
+    };
+
+    if (platform) {
+      this.logger.debug(`Google ID token login platform=${platform}`);
+    }
+
+    return this.loginWithGoogle(profile);
+  }
+
+  async buildGoogleOauthState(
+    redirectUri?: string,
+    platform?: string,
+  ): Promise<string> {
+    const safeRedirectUri = this.sanitizeRedirectUri(redirectUri);
+    const payload: GoogleOauthStatePayload = {
+      type: 'google_oauth_state',
+      nonce: randomBytes(16).toString('hex'),
+      ...(safeRedirectUri ? { redirectUri: safeRedirectUri } : {}),
+      ...(platform ? { platform: platform.trim().toLowerCase() } : {}),
+    };
+
+    return this.jwtService.signAsync(payload, {
+      secret: this.getOauthStateSecret(),
+      expiresIn: this.getOauthStateExpiresIn() as StringValue,
+    });
+  }
+
+  async consumeGoogleOauthState(stateToken?: string): Promise<GoogleOauthStatePayload> {
+    if (!stateToken) {
+      throw new BadRequestException('Missing OAuth state');
+    }
+
+    let payload: GoogleOauthStatePayload;
+    try {
+      payload = await this.jwtService.verifyAsync<GoogleOauthStatePayload>(
+        stateToken,
+        {
+          secret: this.getOauthStateSecret(),
+        },
+      );
+    } catch {
+      throw new ForbiddenException('OAuth state is invalid or expired');
+    }
+
+    if (payload.type !== 'google_oauth_state' || !payload.nonce) {
+      throw new ForbiddenException('OAuth state payload is invalid');
+    }
+
+    return {
+      ...payload,
+      ...(payload.redirectUri
+        ? { redirectUri: this.sanitizeRedirectUri(payload.redirectUri) }
+        : {}),
+    };
+  }
+
+  async createGoogleAuthCode(authResponse: AuthResponseDto): Promise<string> {
+    const code = randomBytes(24).toString('hex');
+    const key = this.getGoogleAuthCodeKey(code);
+    const ttlSeconds = this.getGoogleAuthCodeTtlSeconds();
+    const result = await this.redis.set(
+      key,
+      JSON.stringify(authResponse),
+      'EX',
+      ttlSeconds,
+      'NX',
+    );
+
+    if (result !== 'OK') {
+      throw new UnauthorizedException('Unable to issue OAuth auth code');
+    }
+
+    return code;
+  }
+
+  async exchangeGoogleAuthCode(code: string): Promise<AuthResponseDto> {
+    const key = this.getGoogleAuthCodeKey(code);
+    const raw = await this.redis.eval(
+      "local v=redis.call('GET',KEYS[1]); if v then redis.call('DEL',KEYS[1]); end; return v;",
+      1,
+      key,
+    );
+
+    if (!raw || typeof raw !== 'string') {
+      throw new UnauthorizedException('Auth code is invalid or expired');
+    }
+
+    let parsed: AuthResponseDto;
+    try {
+      parsed = JSON.parse(raw) as AuthResponseDto;
+    } catch {
+      throw new UnauthorizedException('Auth code payload is malformed');
+    }
+
+    if (
+      !parsed?.userId ||
+      !parsed?.email ||
+      !parsed?.username ||
+      !parsed?.accessToken ||
+      !parsed?.refreshToken
+    ) {
+      throw new UnauthorizedException('Auth code payload is invalid');
+    }
+
+    return parsed;
   }
 
   async refreshTokens(refreshToken: string): Promise<AuthResponseDto> {
@@ -495,5 +645,84 @@ export class AuthService {
     }
 
     return value;
+  }
+
+  private getGoogleAudiences(): string[] {
+    const audiences = new Set<string>();
+    const primary = this.configService.get<string>('GOOGLE_CLIENT_ID')?.trim();
+
+    if (primary) {
+      audiences.add(primary);
+    }
+
+    const extra = this.configService
+      .get<string>('GOOGLE_ALLOWED_AUDIENCES')
+      ?.split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+    extra?.forEach((value) => audiences.add(value));
+
+    if (audiences.size === 0) {
+      throw new UnauthorizedException('Google OAuth2 audiences are not configured');
+    }
+
+    return Array.from(audiences);
+  }
+
+  private getOauthStateSecret(): string {
+    return (
+      this.configService.get<string>('OAUTH_STATE_SECRET')?.trim() ||
+      this.configService.getOrThrow<string>('JWT_ACCESS_SECRET')
+    );
+  }
+
+  private getOauthStateExpiresIn(): string {
+    return (
+      this.configService.get<string>('OAUTH_STATE_EXPIRES_IN')?.trim() || '10m'
+    );
+  }
+
+  private getGoogleAuthCodeTtlSeconds(): number {
+    const raw = this.configService.get<string>('GOOGLE_AUTH_CODE_TTL_SECONDS') ?? '120';
+    const ttl = Number(raw);
+    if (!Number.isFinite(ttl) || ttl < 30) {
+      return 120;
+    }
+    return Math.floor(ttl);
+  }
+
+  private getGoogleAuthCodeKey(code: string): string {
+    return `auth:google:code:${this.hashToken(code)}`;
+  }
+
+  private sanitizeRedirectUri(value?: string): string | undefined {
+    if (!value) return undefined;
+
+    const redirectUri = value.trim();
+    if (!redirectUri) return undefined;
+
+    const allowlist = this.getAllowedRedirectUris();
+    const matched = allowlist.some((allowed) => redirectUri.startsWith(allowed));
+    if (!matched) {
+      this.logger.warn(`Blocked OAuth redirect URI: ${redirectUri}`);
+      return undefined;
+    }
+
+    return redirectUri;
+  }
+
+  private getAllowedRedirectUris(): string[] {
+    const frontendUrl = this.configService.get<string>('FRONTEND_URL')?.trim();
+    const extra = this.configService
+      .get<string>('OAUTH_ALLOWED_REDIRECT_URIS')
+      ?.split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+    return [
+      ...(frontendUrl ? [frontendUrl] : []),
+      ...(extra ?? []),
+    ];
   }
 }

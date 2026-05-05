@@ -5,10 +5,13 @@ import {
   Patch,
   Get,
   Req,
+  Res,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiBody,
   ApiCreatedResponse,
   ApiOkResponse,
   ApiOperation,
@@ -40,8 +43,14 @@ import { Public } from 'src/common/decorators/public.decorator';
 import { CurrentUser } from 'src/common/decorators/user.decorator';
 import { JwtPayload } from 'src/common/guards/jwt-auth.guard';
 import type { Request } from 'express';
+import type { Response } from 'express';
 import { GoogleProfilePayload } from './strategies/google.strategy';
 import { GoogleOauthGuard } from './guards/google-oauth.guard';
+import {
+  GoogleExchangeCodeDto,
+  GoogleOauthCallbackResponseDto,
+  GoogleTokenLoginDto,
+} from './dto/google-login.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -83,24 +92,83 @@ export class AuthController {
 
   @ApiOperation({
     summary: 'Đăng nhập nhanh bằng Google OAuth2',
-    description: 'Chuyển hướng người dùng sang Google để xác thực.',
+    description:
+      'Chuyển hướng người dùng sang Google để xác thực. Có thể truyền redirectUri/platform qua query.',
   })
   @Public()
   @Get('google')
   @UseGuards(GoogleOauthGuard)
-  googleAuth() {
+  googleAuth(
+    @Query('redirectUri') _redirectUri?: string,
+    @Query('platform') _platform?: string,
+  ) {
     return;
   }
 
   @ApiOperation({
     summary: 'Google OAuth2 callback',
-    description: 'Google redirect về endpoint này, hệ thống trả JWT/refresh token.',
+    description:
+      'Google redirect về endpoint này. Nếu state có redirectUri hợp lệ, backend redirect kèm auth code one-time.',
+  })
+  @ApiOkResponse({
+    type: GoogleOauthCallbackResponseDto,
+    description:
+      'Callback thành công. Trả JSON nếu không dùng redirectUri, hoặc redirect về frontend nếu có.',
   })
   @Public()
   @Get('google/callback')
   @UseGuards(GoogleOauthGuard)
-  googleAuthCallback(@Req() req: Request) {
-    return this.authService.loginWithGoogle(req.user as GoogleProfilePayload);
+  async googleAuthCallback(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Query('state') state?: string,
+  ) {
+    const authResponse = await this.authService.loginWithGoogle(
+      req.user as GoogleProfilePayload,
+    );
+    const oauthState = await this.authService.consumeGoogleOauthState(state);
+    const code = await this.authService.createGoogleAuthCode(authResponse);
+
+    if (oauthState.redirectUri) {
+      const separator = oauthState.redirectUri.includes('?') ? '&' : '?';
+      const redirectUrl = `${oauthState.redirectUri}${separator}code=${encodeURIComponent(code)}`;
+      return res.redirect(302, redirectUrl);
+    }
+
+    return res.json({
+      status: 'ok',
+      code,
+    });
+  }
+
+  @ApiOperation({
+    summary: 'Đăng nhập Google bằng ID token (Android/Web SDK)',
+    description:
+      'Nhận idToken từ Google SDK và trả accessToken/refreshToken của hệ thống.',
+  })
+  @ApiBody({ type: GoogleTokenLoginDto })
+  @ApiOkResponse({
+    type: AuthResponseDto,
+  })
+  @Public()
+  @Post('google/token')
+  googleTokenLogin(@Body() dto: GoogleTokenLoginDto) {
+    return this.authService.loginWithGoogleIdToken(dto.idToken, dto.platform);
+  }
+
+  @ApiOperation({
+    summary: 'Đổi auth code Google sang token hệ thống',
+    description:
+      'Frontend web gọi endpoint này sau khi nhận code one-time từ redirect callback.',
+  })
+  @ApiBody({ type: GoogleExchangeCodeDto })
+  @ApiOkResponse({
+    type: AuthResponseDto,
+  })
+  @Public()
+  @Post('google/exchange-code')
+  googleExchangeCode(@Body() dto: GoogleExchangeCodeDto) {
+    return this.authService.exchangeGoogleAuthCode(dto.code);
   }
 
   @ApiOperation({

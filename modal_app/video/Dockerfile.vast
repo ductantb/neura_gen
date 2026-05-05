@@ -1,0 +1,33 @@
+FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:128 \
+    HF_HOME=/cache \
+    HF_HUB_CACHE=/cache/hub \
+    WAN_USE_CPU_OFFLOAD=true \
+    WAN_CPU_OFFLOAD_MODE=sequential \
+    WAN_ENABLE_ATTENTION_SLICING=true \
+    WAN_ENABLE_VAE_TILING=true \
+    WAN_ENABLE_VAE_SLICING=true
+
+RUN set -eux; \
+    sed -i 's|http://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list; \
+    sed -i 's|http://security.ubuntu.com/ubuntu|https://security.ubuntu.com/ubuntu|g' /etc/apt/sources.list; \
+    apt-get update -o Acquire::Retries=5; \
+    apt-get install -y --no-install-recommends git ffmpeg; \
+    rm -rf /var/lib/apt/lists/*
+
+RUN python -m pip install --upgrade pip setuptools wheel
+
+WORKDIR /app
+COPY modal_app/video/requirements-vast.txt /app/requirements-vast.txt
+
+RUN python -m pip install -r /app/requirements-vast.txt
+
+COPY modal_app/video /app
+
+EXPOSE 8000
+CMD ["python", "-m", "uvicorn", "vast_server:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

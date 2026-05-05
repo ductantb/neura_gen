@@ -1,0 +1,21 @@
+# Core runtime
+fastapi[standard]==0.115.7
+pydantic>=2,<3
+uvicorn[standard]==0.34.0
+
+# Match Modal stack for deterministic behavior
+git+https://github.com/huggingface/diffusers.git@9d313fc718c8ace9a35f07dad9d5ce8018f8d216
+transformers==4.48.3
+accelerate>=1.1.0
+huggingface_hub==0.34.4
+imageio
+imageio-ffmpeg
+ftfy
+sentencepiece
+safetensors
+pillow
+requests
+numpy
+
+# Needed because app.py imports modal at module import time.
+modal

@@ -12,4 +12,14 @@ describe('ExploreQueryDto', () => {
     expect(errors).toHaveLength(1);
     expect(errors[0].constraints?.isIn).toBeDefined();
   });
+
+  it('accepts debug as a boolean-string flag', () => {
+    const dto = Object.assign(new ExploreQueryDto(), {
+      debug: 'true',
+    });
+
+    const errors = validateSync(dto);
+
+    expect(errors).toHaveLength(0);
+  });
 });
