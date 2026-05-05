@@ -533,7 +533,9 @@ export class VideoWorker implements OnModuleDestroy {
     let lastRetryableError: unknown = null;
     let hasFallback = false;
 
-    for (const provider of providerPlan) {
+    for (let providerIndex = 0; providerIndex < providerPlan.length; providerIndex += 1) {
+      const provider = providerPlan[providerIndex];
+      const hasNextProvider = providerIndex < providerPlan.length - 1;
       if (provider === 'vast' && !(await this.shouldUseVastProvider())) {
         continue;
       }
@@ -576,7 +578,21 @@ export class VideoWorker implements OnModuleDestroy {
           }
 
           if (!isRetryable) {
-            throw error;
+            if (!hasNextProvider) {
+              throw error;
+            }
+
+            hasFallback = true;
+            await this.log(
+              payload.jobId,
+              `Provider ${provider} returned non-retryable error, switching to fallback if available: ${providerError.message}`,
+              {
+                provider,
+                providerAttempt,
+                fallbackTriggered: true,
+              },
+            );
+            break;
           }
 
           if (retryIndex < maxRetries) {

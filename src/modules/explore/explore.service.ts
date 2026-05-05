@@ -101,8 +101,9 @@ export class ExploreService {
   }
 
   async getForYou(userId: string, query: ExploreQueryDto) {
-    const { topic, limit = 20, cursor } = query;
+    const { topic, limit = 20, cursor, debug } = query;
     const normalizedTopic = topic?.trim().toLowerCase();
+    const debugEnabled = this.isForYouDebugEnabled(debug);
 
     const [profiles, followings, hiddenRows] = await Promise.all([
       this.prismaService.userTopicProfile.findMany({
@@ -197,6 +198,13 @@ export class ExploreService {
       }),
     ]);
 
+    const candidateSources = this.buildCandidateSourceMap({
+      topicCandidates,
+      followCandidates,
+      trendingCandidates,
+      freshCandidates,
+    });
+
     const mergedItems = this.mergeById([
       ...topicCandidates,
       ...followCandidates,
@@ -214,22 +222,31 @@ export class ExploreService {
     }
 
     const candidatePostIds = mergedItems.map((item) => item.postId);
+    const candidatePostIdSet = new Set(candidatePostIds);
     const interactions = await this.prismaService.exploreInteraction.findMany({
       where: {
         userId,
-        postId: {
-          in: candidatePostIds,
-        },
       },
+      orderBy: { createdAt: 'desc' },
+      take: 500,
       select: {
         postId: true,
         eventType: true,
+        createdAt: true,
+        post: {
+          select: {
+            userId: true,
+          },
+        },
       },
     });
 
     const topicAffinity = this.buildTopicAffinityMap(profiles);
     const followingSet = new Set(followingIds);
-    const perPostEventCounter = this.buildPostEventCounter(interactions);
+    const perPostEventCounter = this.buildPostEventCounter(
+      interactions.filter((interaction) => candidatePostIdSet.has(interaction.postId)),
+    );
+    const creatorAffinity = this.buildCreatorAffinityMap(interactions);
 
     const ranked = mergedItems
       .map((item) => {
@@ -243,10 +260,15 @@ export class ExploreService {
         const ageHours = (Date.now() - item.post.createdAt.getTime()) / 3_600_000;
         const topicBonus = Math.min(10, (topicAffinity[item.topic] ?? 0) * 0.8);
         const followBonus = followingSet.has(item.post.user.id) ? 3.5 : 0;
+        const creatorBonus = Math.min(
+          6,
+          creatorAffinity.get(item.post.user.id) ?? 0,
+        );
         const freshnessBonus = Math.max(0, 24 - ageHours) * 0.08;
         const positiveFeedbackBonus =
           (postEvents.LIKE ?? 0) * 1.2 + (postEvents.COMMENT ?? 0) * 1.8;
         const seenPenalty = Math.min(4, seenCount * 0.6);
+        const unseenBoost = seenCount === 0 ? 1.5 : 0;
         const skipPenalty = Math.max(
           0,
           ((postEvents.IMPRESSION ?? 0) - (postEvents.OPEN_POST ?? 0)) * 0.35,
@@ -256,14 +278,65 @@ export class ExploreService {
           item.score +
           topicBonus +
           followBonus +
+          creatorBonus +
           freshnessBonus +
-          positiveFeedbackBonus -
+          positiveFeedbackBonus +
+          unseenBoost -
           seenPenalty -
           skipPenalty;
 
-        return {
+        const result = {
           ...item,
           personalScore: Number(personalScore.toFixed(4)),
+        };
+
+        if (!debugEnabled) {
+          return result;
+        }
+
+        return {
+          ...result,
+          debug: {
+            candidateSources: candidateSources.get(item.id) ?? [],
+            baseScore: Number(item.score.toFixed(4)),
+            topicBonus: Number(topicBonus.toFixed(4)),
+            followBonus: Number(followBonus.toFixed(4)),
+            creatorBonus: Number(creatorBonus.toFixed(4)),
+            freshnessBonus: Number(freshnessBonus.toFixed(4)),
+            positiveFeedbackBonus: Number(positiveFeedbackBonus.toFixed(4)),
+            unseenBoost: Number(unseenBoost.toFixed(4)),
+            seenPenalty: Number(seenPenalty.toFixed(4)),
+            skipPenalty: Number(skipPenalty.toFixed(4)),
+            finalScore: Number(personalScore.toFixed(4)),
+            topicAffinity: Number((topicAffinity[item.topic] ?? 0).toFixed(4)),
+            creatorAffinity: Number(
+              (creatorAffinity.get(item.post.user.id) ?? 0).toFixed(4),
+            ),
+            seenCount,
+            ageHours: Number(ageHours.toFixed(2)),
+          },
+        };
+      })
+      .sort((a, b) => {
+        if (b.personalScore !== a.personalScore) {
+          return b.personalScore - a.personalScore;
+        }
+        return b.post.createdAt.getTime() - a.post.createdAt.getTime();
+      });
+
+    const creatorOccurrences = new Map<string, number>();
+    const diversified = ranked
+      .map((item) => {
+        const occurrence = creatorOccurrences.get(item.post.user.id) ?? 0;
+        creatorOccurrences.set(item.post.user.id, occurrence + 1);
+
+        if (occurrence === 0) {
+          return item;
+        }
+
+        return {
+          ...item,
+          personalScore: Number((item.personalScore - occurrence * 1.25).toFixed(4)),
         };
       })
       .sort((a, b) => {
@@ -274,10 +347,10 @@ export class ExploreService {
       });
 
     const startIndex = cursor
-      ? Math.max(0, ranked.findIndex((item) => item.id === cursor) + 1)
+      ? Math.max(0, diversified.findIndex((item) => item.id === cursor) + 1)
       : 0;
-    const page = ranked.slice(startIndex, startIndex + limit);
-    const hasNext = startIndex + limit < ranked.length;
+    const page = diversified.slice(startIndex, startIndex + limit);
+    const hasNext = startIndex + limit < diversified.length;
 
     return {
       mode: 'for_you',
@@ -293,6 +366,14 @@ export class ExploreService {
         })),
         followingCreators: followingIds.length,
       },
+      ...(debugEnabled && {
+        debug: {
+          candidateCount: mergedItems.length,
+          interactionSampleCount: interactions.length,
+          preferredTopics,
+          followingIds,
+        },
+      }),
     };
   }
 
@@ -457,6 +538,43 @@ export class ExploreService {
     return Array.from(map.values());
   }
 
+  private buildCandidateSourceMap(groups: {
+    topicCandidates: ExploreItemWithRelations[];
+    followCandidates: ExploreItemWithRelations[];
+    trendingCandidates: ExploreItemWithRelations[];
+    freshCandidates: ExploreItemWithRelations[];
+  }) {
+    const map = new Map<string, string[]>();
+
+    const register = (source: string, items: ExploreItemWithRelations[]) => {
+      for (const item of items) {
+        const sources = map.get(item.id) ?? [];
+        if (!sources.includes(source)) {
+          sources.push(source);
+        }
+        map.set(item.id, sources);
+      }
+    };
+
+    register('topic', groups.topicCandidates);
+    register('following', groups.followCandidates);
+    register('trending', groups.trendingCandidates);
+    register('fresh', groups.freshCandidates);
+
+    return map;
+  }
+
+  private isForYouDebugEnabled(debug?: string) {
+    if (debug !== 'true') {
+      return false;
+    }
+
+    return (
+      (process.env.EXPLORE_FOR_YOU_DEBUG_ENABLED ?? 'false').toLowerCase() ===
+      'true'
+    );
+  }
+
   private buildTopicAffinityMap(
     profiles: Array<{ topic: string; score: number; updatedAt: Date }>,
   ) {
@@ -476,6 +594,11 @@ export class ExploreService {
     return Math.max(-20, Math.min(20, decayed));
   }
 
+  private decayInteractionWeight(createdAt: Date) {
+    const ageHours = (Date.now() - createdAt.getTime()) / 3_600_000;
+    return Math.max(0.2, Math.exp(-0.018 * ageHours));
+  }
+
   private buildPostEventCounter(
     interactions: Array<{ postId: string; eventType: ExploreEventType }>,
   ) {
@@ -485,6 +608,38 @@ export class ExploreService {
       const row = map.get(interaction.postId) ?? {};
       row[interaction.eventType] = (row[interaction.eventType] ?? 0) + 1;
       map.set(interaction.postId, row);
+    }
+
+    return map;
+  }
+
+  private buildCreatorAffinityMap(
+    interactions: Array<{
+      eventType: ExploreEventType;
+      createdAt: Date;
+      post: {
+        userId: string;
+      };
+    }>,
+  ) {
+    const map = new Map<string, number>();
+
+    for (const interaction of interactions) {
+      const creatorId = interaction.post?.userId;
+      if (!creatorId) {
+        continue;
+      }
+
+      const weight = EVENT_WEIGHTS[interaction.eventType] ?? 0;
+      if (weight <= 0) {
+        continue;
+      }
+
+      map.set(
+        creatorId,
+        (map.get(creatorId) ?? 0) +
+          weight * this.decayInteractionWeight(interaction.createdAt),
+      );
     }
 
     return map;

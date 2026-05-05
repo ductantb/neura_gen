@@ -293,4 +293,47 @@ describe('VideoWorker', () => {
       }),
     );
   });
+
+  it('falls back to Modal when Vast returns a non-retryable error', async () => {
+    process.env.VIDEO_PROVIDER_PRIMARY = 'vast';
+    process.env.VIDEO_PROVIDER_FALLBACK = 'modal';
+    vast.isEnabled.mockReturnValue(true);
+    vast.healthcheck.mockResolvedValue(true);
+
+    const vastValidationError = Object.assign(
+      new Error('Vast request failed with status 400: unsupported preset'),
+      {
+        statusCode: 400,
+        retryable: false,
+        errorType: 'PERMANENT_INPUT',
+      },
+    );
+    vast.generateVideo.mockRejectedValue(vastValidationError);
+
+    modal.generateVideo.mockResolvedValue({ status: 'ok', provider: 'modal' });
+
+    await expect(
+      worker['executeProviderPlan'](
+        ['vast', 'modal'],
+        {
+          jobId: 'job-1',
+          prompt: 'prompt',
+          presetId: 'preview_ltx_i2v',
+        },
+      ),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        provider: 'modal',
+        fallbackTriggered: true,
+      }),
+    );
+
+    expect(vast.generateVideo).toHaveBeenCalled();
+    expect(modal.generateVideo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'modal',
+        presetId: 'preview_ltx_i2v',
+      }),
+    );
+  });
 });

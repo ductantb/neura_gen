@@ -48,4 +48,13 @@ export class ExploreQueryDto {
   @IsOptional()
   @IsString()
   cursor?: string;
+
+  @ApiPropertyOptional({
+    example: 'true',
+    description:
+      'Chỉ dùng cho debug feed for_you. Khi bật sẽ trả breakdown điểm xếp hạng cho từng item.',
+  })
+  @IsOptional()
+  @IsBooleanString()
+  debug?: string;
 }

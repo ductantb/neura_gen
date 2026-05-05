@@ -1,10 +1,17 @@
 import { ExecutionContext, Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AuthGuard } from '@nestjs/passport';
+import type { Request } from 'express';
+import { JwtService } from '@nestjs/jwt';
+import { randomBytes } from 'crypto';
+import { StringValue } from 'ms';
 
 @Injectable()
 export class GoogleOauthGuard extends AuthGuard('google') {
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly jwtService: JwtService,
+  ) {
     super();
   }
 
@@ -24,5 +31,41 @@ export class GoogleOauthGuard extends AuthGuard('google') {
     }
 
     return super.canActivate(context);
+  }
+
+  getAuthenticateOptions(context: ExecutionContext) {
+    const req = context.switchToHttp().getRequest<Request>();
+
+    if (req.path.endsWith('/callback')) {
+      return { session: false };
+    }
+
+    const redirectUri =
+      typeof req.query.redirectUri === 'string' ? req.query.redirectUri : undefined;
+    const platform =
+      typeof req.query.platform === 'string' ? req.query.platform : undefined;
+
+    const state = this.jwtService.sign(
+      {
+        type: 'google_oauth_state',
+        nonce: randomBytes(16).toString('hex'),
+        ...(redirectUri ? { redirectUri } : {}),
+        ...(platform ? { platform } : {}),
+      },
+      {
+        secret:
+          this.configService.get<string>('OAUTH_STATE_SECRET')?.trim() ||
+          this.configService.getOrThrow<string>('JWT_ACCESS_SECRET'),
+        expiresIn: (this.configService.get<string>('OAUTH_STATE_EXPIRES_IN') ||
+          '10m') as StringValue,
+      },
+    );
+
+    return {
+      scope: ['email', 'profile'],
+      prompt: 'select_account',
+      session: false,
+      state,
+    };
   }
 }

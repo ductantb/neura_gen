@@ -83,6 +83,21 @@ HUNYUAN_NEGATIVE_PROMPT = (
     "static frame, unnatural motion, camera shake, text, subtitles, watermark"
 )
 
+
+def _env_flag(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+WAN_USE_CPU_OFFLOAD = _env_flag("WAN_USE_CPU_OFFLOAD", False)
+WAN_CPU_OFFLOAD_MODE = os.environ.get("WAN_CPU_OFFLOAD_MODE", "model").strip().lower()
+WAN_ENABLE_ATTENTION_SLICING = _env_flag("WAN_ENABLE_ATTENTION_SLICING", False)
+WAN_ENABLE_VAE_TILING = _env_flag("WAN_ENABLE_VAE_TILING", True)
+WAN_ENABLE_VAE_SLICING = _env_flag("WAN_ENABLE_VAE_SLICING", True)
+
 cache_volume = modal.Volume.from_name("neura-video-model-cache", create_if_missing=True)
 
 image = (
@@ -340,7 +355,7 @@ def _load_wan_t2v_pipeline():
         vae=vae,
         torch_dtype=torch.bfloat16,
     )
-    pipe.to("cuda")
+    _configure_wan_pipeline_memory(pipe)
 
     _WAN_T2V_PIPELINE = pipe
     return _WAN_T2V_PIPELINE
@@ -367,10 +382,42 @@ def _load_wan_i2v_pipeline():
         vae=vae,
         torch_dtype=torch.bfloat16,
     )
-    pipe.to("cuda")
+    _configure_wan_pipeline_memory(pipe)
 
     _WAN_I2V_PIPELINE = pipe
     return _WAN_I2V_PIPELINE
+
+
+def _configure_wan_pipeline_memory(pipe):
+    # Keep generation quality/profile unchanged; only tune memory behavior.
+    if WAN_ENABLE_VAE_TILING:
+        if hasattr(pipe, "enable_vae_tiling"):
+            pipe.enable_vae_tiling()
+        elif hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_tiling"):
+            pipe.vae.enable_tiling()
+
+    if WAN_ENABLE_VAE_SLICING:
+        if hasattr(pipe, "enable_vae_slicing"):
+            pipe.enable_vae_slicing()
+        elif hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_slicing"):
+            pipe.vae.enable_slicing()
+
+    if WAN_ENABLE_ATTENTION_SLICING and hasattr(pipe, "enable_attention_slicing"):
+        pipe.enable_attention_slicing("max")
+
+    if WAN_USE_CPU_OFFLOAD:
+        if WAN_CPU_OFFLOAD_MODE == "sequential" and hasattr(
+            pipe,
+            "enable_sequential_cpu_offload",
+        ):
+            pipe.enable_sequential_cpu_offload()
+            return
+
+        if hasattr(pipe, "enable_model_cpu_offload"):
+            pipe.enable_model_cpu_offload()
+            return
+
+    pipe.to("cuda")
 
 
 def _release_wan_t2v_pipeline():
@@ -752,6 +799,7 @@ def _generate_wan_video_response(
     if has_input_image:
         generation_kwargs["image"] = image
 
+    _cleanup_cuda_memory()
     result = pipe(
         **generation_kwargs,
     )

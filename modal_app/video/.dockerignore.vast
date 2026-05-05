@@ -1,0 +1,12 @@
+# Ignore caches and local artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+*.tmp
+.git
+.gitignore
+.env
+.env.*
+node_modules/

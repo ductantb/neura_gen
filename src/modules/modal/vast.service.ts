@@ -4,6 +4,16 @@ import { firstValueFrom } from 'rxjs';
 import type { GenerateVideoInput } from './modal.service';
 import { AxiosLikeError, ProviderRequestError } from './provider-error.types';
 
+const LTX_PREVIEW_MODEL_NAME = 'ltx-video-i2v-preview';
+const LTX_PREVIEW_PRESET_ID = 'preview_ltx_i2v';
+const TURBO_WAN_MODEL_NAME = 'wan2.2-i2v-a14b-turbo';
+const TURBO_WAN_PRESET_ID = 'turbo_wan22_i2v_a14b';
+const WAN_STANDARD_MODEL_NAME = 'wan2.2-ti2v-standard';
+const WAN_STANDARD_PRESET_ID = 'standard_wan22_ti2v';
+const WAN_STANDARD_8S_PRESET_ID = 'standard_wan22_ti2v_8s';
+const HUNYUAN_QUALITY_MODEL_NAME = 'hunyuan-video-i2v-quality';
+const HUNYUAN_QUALITY_PRESET_ID = 'quality_hunyuan_i2v';
+
 @Injectable()
 export class VastService {
   constructor(private readonly http: HttpService) {}
@@ -23,6 +33,41 @@ export class VastService {
 
   private resolveTimeoutMs() {
     return Number(process.env.VAST_REQUEST_TIMEOUT_MS ?? 45 * 60 * 1000);
+  }
+
+  private resolveGenerateUrl(payload: GenerateVideoInput) {
+    const genericUrl = process.env.VAST_GENERATE_VIDEO_URL;
+    if (genericUrl) {
+      return genericUrl;
+    }
+
+    const wanOnlyUrl = process.env.VAST_GENERATE_VIDEO_WAN_URL;
+    if (
+      wanOnlyUrl &&
+      (payload.presetId === WAN_STANDARD_PRESET_ID ||
+        payload.presetId === WAN_STANDARD_8S_PRESET_ID ||
+        payload.presetId === TURBO_WAN_PRESET_ID ||
+        payload.modelName === WAN_STANDARD_MODEL_NAME ||
+        payload.modelName === TURBO_WAN_MODEL_NAME)
+    ) {
+      return wanOnlyUrl;
+    }
+
+    if (
+      payload.presetId === LTX_PREVIEW_PRESET_ID ||
+      payload.modelName === LTX_PREVIEW_MODEL_NAME ||
+      payload.presetId === HUNYUAN_QUALITY_PRESET_ID ||
+      payload.modelName === HUNYUAN_QUALITY_MODEL_NAME ||
+      payload.presetId === TURBO_WAN_PRESET_ID ||
+      payload.modelName === TURBO_WAN_MODEL_NAME ||
+      payload.presetId === WAN_STANDARD_PRESET_ID ||
+      payload.presetId === WAN_STANDARD_8S_PRESET_ID ||
+      payload.modelName === WAN_STANDARD_MODEL_NAME
+    ) {
+      return this.getRequiredEnv('VAST_GENERATE_VIDEO_URL');
+    }
+
+    return this.getRequiredEnv('VAST_GENERATE_VIDEO_URL');
   }
 
   private isRetryableVastError(statusCode?: number, responseBody?: string) {
@@ -95,7 +140,7 @@ export class VastService {
 
   async generateVideo(payload: GenerateVideoInput) {
     try {
-      const generateUrl = this.getRequiredEnv('VAST_GENERATE_VIDEO_WAN_URL');
+      const generateUrl = this.resolveGenerateUrl(payload);
       const res = await firstValueFrom(
         this.http.post(generateUrl, payload, {
           headers: { 'Content-Type': 'application/json' },

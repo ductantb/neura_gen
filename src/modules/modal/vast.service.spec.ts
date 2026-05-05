@@ -15,6 +15,7 @@ describe('VastService', () => {
     process.env = {
       ...originalEnv,
       VAST_ENABLED: 'true',
+      VAST_GENERATE_VIDEO_URL: 'https://vast.example/invoke',
       VAST_GENERATE_VIDEO_WAN_URL: 'https://vast.example/wan',
       VAST_HEALTHCHECK_URL: 'https://vast.example/health',
       VAST_REQUEST_TIMEOUT_MS: '123456',
@@ -42,7 +43,7 @@ describe('VastService', () => {
     expect(service).toBeDefined();
   });
 
-  it('uses VAST_GENERATE_VIDEO_WAN_URL and timeout from env', async () => {
+  it('uses VAST_GENERATE_VIDEO_URL and timeout from env', async () => {
     http.post.mockReturnValue(
       of({
         status: 200,
@@ -53,6 +54,33 @@ describe('VastService', () => {
     await service.generateVideo({
       prompt: 'prompt',
       inputImageUrl: 'https://signed.example/input.png',
+      presetId: 'standard_wan22_ti2v',
+      modelName: 'wan2.2-ti2v-standard',
+    });
+
+    expect(http.post).toHaveBeenCalledWith(
+      'https://vast.example/invoke',
+      expect.objectContaining({
+        prompt: 'prompt',
+      }),
+      expect.objectContaining({
+        timeout: 123456,
+        proxy: false,
+      }),
+    );
+  });
+
+  it('falls back to WAN-specific URL when generic VAST_GENERATE_VIDEO_URL is missing', async () => {
+    delete process.env.VAST_GENERATE_VIDEO_URL;
+    http.post.mockReturnValue(
+      of({
+        status: 200,
+        data: { status: 'ok' },
+      }),
+    );
+
+    await service.generateVideo({
+      prompt: 'prompt',
       presetId: 'standard_wan22_ti2v',
       modelName: 'wan2.2-ti2v-standard',
     });
@@ -70,6 +98,7 @@ describe('VastService', () => {
   });
 
   it('fails fast when VAST endpoint is missing', async () => {
+    delete process.env.VAST_GENERATE_VIDEO_URL;
     delete process.env.VAST_GENERATE_VIDEO_WAN_URL;
 
     await expect(
@@ -77,7 +106,7 @@ describe('VastService', () => {
         prompt: 'prompt',
         inputImageUrl: 'https://signed.example/input.png',
       }),
-    ).rejects.toThrow('VAST_GENERATE_VIDEO_WAN_URL is missing');
+    ).rejects.toThrow('VAST_GENERATE_VIDEO_URL is missing');
   });
 
   it('marks billing-limit 429 as non-retryable', async () => {
@@ -175,4 +204,3 @@ describe('VastService', () => {
     expect(buffer.equals(expected)).toBe(true);
   });
 });
-
