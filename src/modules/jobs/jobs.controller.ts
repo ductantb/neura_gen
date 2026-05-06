@@ -5,6 +5,7 @@ import { CurrentUser } from 'src/common/decorators/user.decorator';
 import { JwtPayload } from 'src/common/guards/jwt-auth.guard';
 import { JobEventsService, type JobStreamEvent } from './job-events.service';
 import { concat, defer, from, map, merge, mergeMap, of, timer, type Observable,} from 'rxjs';
+import { Throttle } from '@nestjs/throttler';
 
 @Controller('jobs')
 export class JobsController {
@@ -14,6 +15,7 @@ export class JobsController {
   ) {}
 
   @Post('video')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   async createVideoJob(
     @CurrentUser() user: JwtPayload,
     @Body() dto: CreateVideoJobDto,
@@ -43,6 +45,7 @@ export class JobsController {
   }
 
   @Sse(':id/events')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   streamJobEvents(
     @CurrentUser() user: JwtPayload,
     @Param('id') id: string,
@@ -83,6 +86,7 @@ export class JobsController {
   }
 
   @Post(':id/cancel')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   async cancelJob(
     @CurrentUser() user: JwtPayload,
     @Param('id') id: string,

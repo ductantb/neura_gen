@@ -54,6 +54,13 @@ describe('VideoWorker', () => {
     emitLog: jest.fn(),
   };
 
+  const structuredLogger = {
+    debug: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  };
+
   let worker: VideoWorker;
 
   beforeEach(() => {
@@ -71,6 +78,7 @@ describe('VideoWorker', () => {
       vast as any,
       storageService as any,
       jobEvents as unknown as JobEventsService,
+      structuredLogger as any,
     );
 
     vast.isEnabled.mockReturnValue(false);

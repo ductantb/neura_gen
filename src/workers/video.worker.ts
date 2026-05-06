@@ -13,6 +13,7 @@ import { PrismaService } from 'src/infra/prisma/prisma.service';
 import { JobEventsService } from 'src/modules/jobs/job-events.service';
 import { ModalService } from 'src/modules/modal/modal.service';
 import { VastService } from 'src/modules/modal/vast.service';
+import { StructuredLoggerService } from 'src/infra/logging/structured-logger.service';
 import { generateThumbnailFromVideoBuffer } from 'src/utils/video-thumbnail.util';
 import { addBackgroundAudioToVideoBuffer } from 'src/utils/video-background-audio.util';
 import type { ProviderRequestError } from 'src/modules/modal/provider-error.types';
@@ -48,6 +49,7 @@ export class VideoWorker implements OnModuleDestroy {
     private readonly vast: VastService,
     private readonly storageService: StorageService,
     private readonly jobEvents: JobEventsService,
+    private readonly structuredLogger: StructuredLoggerService,
   ) {}
 
   // create job log
@@ -69,6 +71,14 @@ export class VideoWorker implements OnModuleDestroy {
       jobId,
       message,
       createdAt: logEntry.createdAt.toISOString(),
+      provider: extra?.provider ?? null,
+      providerAttempt: extra?.providerAttempt ?? null,
+      fallbackTriggered: extra?.fallbackTriggered ?? false,
+    });
+
+    this.structuredLogger.info('worker.job.log', {
+      jobId,
+      message,
       provider: extra?.provider ?? null,
       providerAttempt: extra?.providerAttempt ?? null,
       fallbackTriggered: extra?.fallbackTriggered ?? false,
@@ -131,6 +141,18 @@ export class VideoWorker implements OnModuleDestroy {
       providerAttempt: extra?.providerAttempt ?? null,
       fallbackTriggered: extra?.fallbackTriggered ?? false,
     });
+
+    const level: 'info' | 'warn' | 'error' =
+      status === JobStatus.FAILED ? 'error' : status === JobStatus.CANCELLED ? 'warn' : 'info';
+
+    this.structuredLogger[level]('worker.job.status', {
+      jobId: updatedJob.id,
+      status: updatedJob.status,
+      progress: updatedJob.progress,
+      provider: extra?.provider ?? updatedJob.provider ?? null,
+      providerAttempt: extra?.providerAttempt ?? null,
+      fallbackTriggered: extra?.fallbackTriggered ?? false,
+    });
   }
 
   // initialize worker and listen to queue
@@ -138,6 +160,9 @@ export class VideoWorker implements OnModuleDestroy {
   async start(redis: Redis): Promise<boolean> {
     // Allow turning off worker via environment variable
     if (process.env.RUN_WORKER !== 'true') {
+      this.structuredLogger.warn('worker.start.skipped', {
+        runWorker: process.env.RUN_WORKER ?? null,
+      });
       return false;
     }
 
@@ -157,12 +182,22 @@ export class VideoWorker implements OnModuleDestroy {
     this.worker.on('completed', () => {});
     this.worker.on('failed', () => {});
 
+    this.structuredLogger.info('worker.start.ready', {
+      queueName,
+      concurrency,
+    });
+
     return true;
   }
 
   // ========================= MAIN HANDLER =========================
   private async handle(bullJob: Job) {
     const { jobId } = bullJob.data as { jobId: string };
+    this.structuredLogger.info('worker.job.received', {
+      jobId,
+      queueAttempt: bullJob.attemptsMade + 1,
+      queueMaxAttempts: bullJob.opts.attempts ?? 1,
+    });
 
     const job = await this.prisma.generateJob.findUnique({
       where: { id: jobId },
@@ -452,6 +487,13 @@ export class VideoWorker implements OnModuleDestroy {
         fallbackTriggered: providerExecution.fallbackTriggered,
       });
 
+      this.structuredLogger.info('worker.job.completed', {
+        jobId,
+        provider: providerExecution.provider,
+        providerAttempt: providerExecution.providerAttempt,
+        fallbackTriggered: providerExecution.fallbackTriggered,
+      });
+
       return {
         outputAssetId: outputAsset.id,
         bucket: uploadResult.bucket,
@@ -469,6 +511,10 @@ export class VideoWorker implements OnModuleDestroy {
       if (err instanceof JobCancelledError) {
         await this.cleanupOutputArtifacts(jobId);
         await this.log(jobId, message);
+        this.structuredLogger.warn('worker.job.cancelled', {
+          jobId,
+          message,
+        });
         return;
       }
 
@@ -488,6 +534,13 @@ export class VideoWorker implements OnModuleDestroy {
           `Attempt ${bullJob.attemptsMade + 1} failed, retrying: ${message}`,
         );
 
+        this.structuredLogger.warn('worker.job.retrying', {
+          jobId,
+          message,
+          queueAttempt: bullJob.attemptsMade + 1,
+          queueMaxAttempts: maxAttempts,
+        });
+
         throw err;
       }
 
@@ -503,6 +556,12 @@ export class VideoWorker implements OnModuleDestroy {
       await this.refundFailedJob(job, message);
 
       await this.log(jobId, `Job failed permanently: ${message}`);
+      this.structuredLogger.error('worker.job.failed', {
+        jobId,
+        message,
+        queueAttempt: bullJob.attemptsMade + 1,
+        queueMaxAttempts: maxAttempts,
+      });
 
       if (!isRetryable) {
         return;

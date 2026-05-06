@@ -2,6 +2,7 @@ import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { AxiosLikeError, ProviderRequestError } from './provider-error.types';
+import { StructuredLoggerService } from 'src/infra/logging/structured-logger.service';
 
 const LTX_PREVIEW_MODEL_NAME = 'ltx-video-i2v-preview';
 const LTX_PREVIEW_PRESET_ID = 'preview_ltx_i2v';
@@ -15,7 +16,10 @@ const HUNYUAN_QUALITY_PRESET_ID = 'quality_hunyuan_i2v';
 
 @Injectable()
 export class ModalService {
-  constructor(private readonly http: HttpService) {}
+  constructor(
+    private readonly http: HttpService,
+    private readonly logger: StructuredLoggerService,
+  ) {}
 
   private getRequiredEnv(name: string) {
     const url = process.env[name];
@@ -114,7 +118,13 @@ export class ModalService {
   async generateVideo(payload: GenerateVideoInput) {
     try {
       const generateUrl = this.resolveGenerateUrl(payload);
-      console.log('Modal payload:', JSON.stringify(payload, null, 2));
+      this.logger.info('provider.modal.request', {
+        jobId: payload.jobId ?? null,
+        presetId: payload.presetId ?? null,
+        modelName: payload.modelName ?? null,
+        workflow: payload.workflow ?? null,
+        hasInputImageUrl: Boolean(payload.inputImageUrl),
+      });
       const res = await firstValueFrom(
         this.http.post(generateUrl, payload, {
           headers: { 'Content-Type': 'application/json' },
@@ -122,18 +132,16 @@ export class ModalService {
           proxy: false,
         }),
       );
-      console.log('Modal API Response Status:', res.status);
-      console.log(
-        'Modal API Response Headers:',
-        JSON.stringify(res.headers, null, 2),
-      );
-      console.log(
-        'Modal API Response Data:',
-        JSON.stringify(res.data, null, 2),
-      );
+      this.logger.info('provider.modal.response', {
+        jobId: payload.jobId ?? null,
+        statusCode: res.status,
+      });
       return res.data;
     } catch (error) {
-      console.error('Modal API Error:', error);
+      this.logger.error('provider.modal.error', {
+        jobId: payload.jobId ?? null,
+        message: error instanceof Error ? error.message : 'unknown modal error',
+      });
       const axiosLikeError = error as AxiosLikeError;
       if (axiosLikeError?.response || axiosLikeError?.isAxiosError) {
         const statusCode = axiosLikeError.response?.status;

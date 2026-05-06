@@ -51,6 +51,7 @@ import {
   GoogleOauthCallbackResponseDto,
   GoogleTokenLoginDto,
 } from './dto/google-login.dto';
+import { Throttle } from '@nestjs/throttler';
 
 @Controller('auth')
 export class AuthController {
@@ -68,6 +69,7 @@ export class AuthController {
     description: 'Email đã tồn tại hoặc dữ liệu không hợp lệ',
   })
   @Public()
+  @Throttle({ default: { limit: 5, ttl: 5 * 60_000 } })
   @Post('register')
   register(@Body() dto: RegisterDto) {
     return this.authService.register(dto.email, dto.password);
@@ -85,6 +87,7 @@ export class AuthController {
     description: 'Email hoặc mật khẩu không đúng',
   })
   @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('login')
   login(@Body() dto: LoginDto) {
     return this.authService.login(dto.email, dto.password);
@@ -151,6 +154,7 @@ export class AuthController {
     type: AuthResponseDto,
   })
   @Public()
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Post('google/token')
   googleTokenLogin(@Body() dto: GoogleTokenLoginDto) {
     return this.authService.loginWithGoogleIdToken(dto.idToken, dto.platform);
@@ -166,6 +170,7 @@ export class AuthController {
     type: AuthResponseDto,
   })
   @Public()
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Post('google/exchange-code')
   googleExchangeCode(@Body() dto: GoogleExchangeCodeDto) {
     return this.authService.exchangeGoogleAuthCode(dto.code);
@@ -183,6 +188,7 @@ export class AuthController {
     description: 'Refresh token không hợp lệ hoặc đã hết hạn',
   })
   @Public()
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Post('refresh')
   refresh(@Body() dto: RefreshTokenDto) {
     return this.authService.refreshTokens(dto.refreshToken);
@@ -254,6 +260,7 @@ export class AuthController {
     type: ForgotPasswordResponseDto,
   })
   @Public()
+  @Throttle({ default: { limit: 3, ttl: 15 * 60_000 } })
   @Post('forgot-password')
   forgotPassword(@Body() dto: ForgotPasswordDto) {
     return this.authService.forgotPassword(dto.email);
@@ -271,6 +278,7 @@ export class AuthController {
     description: 'Token không hợp lệ hoặc đã hết hạn',
   })
   @Public()
+  @Throttle({ default: { limit: 10, ttl: 15 * 60_000 } })
   @Post('reset-password')
   resetPassword(@Body() dto: ResetPasswordDto) {
     return this.authService.resetPassword(dto.token, dto.newPassword);

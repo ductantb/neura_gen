@@ -86,6 +86,11 @@ JWT_REFRESH_SECRET=replace_with_another_long_random_string
 JWT_REFRESH_EXPIRES_IN=7d
 
 PORT=3000
+THROTTLE_TTL_MS=60000
+THROTTLE_LIMIT=120
+LOG_LEVEL=info
+# Optional: protect /ops/metrics in production
+OPS_METRICS_TOKEN=replace_with_strong_random_secret
 
 # Modal endpoints
 MODAL_GENERATE_VIDEO_URL=https://your-ltx-endpoint.modal.run
@@ -168,6 +173,10 @@ PAYOS_PARTNER_CODE=optional_partner_code
 - `MODAL_GENERATE_VIDEO_HUNYUAN_URL`: endpoint preset `quality_hunyuan_i2v`
 - `REDIS_HOST`, `REDIS_PORT`: Redis cho BullMQ
 - `RUN_WORKER`: bật/tắt worker trong tiến trình hiện tại
+- `THROTTLE_TTL_MS`: cửa sổ thời gian rate-limit mặc định (milliseconds)
+- `THROTTLE_LIMIT`: số request tối đa trong mỗi cửa sổ rate-limit mặc định
+- `LOG_LEVEL`: mức log JSON (`debug|info|warn|error`)
+- `OPS_METRICS_TOKEN`: token bảo vệ endpoint `GET /ops/metrics` (đọc từ header `x-ops-token`)
 - `AWS_*`, `AWS_S3_BUCKET`: cấu hình lưu file lên S3
 - `MAIL_*`: cấu hình Gmail SMTP để gửi email auth
 - `FRONTEND_URL`: URL frontend dùng để tạo reset link
@@ -237,6 +246,8 @@ Sau khi seed, có thể dùng tài khoản mẫu:
 
 - API: `http://localhost:3000`
 - Swagger: `http://localhost:3000/api`
+- Health readiness: `http://localhost:3000/health`
+- Ops metrics: `http://localhost:3000/ops/metrics`
 
 Xem log:
 
@@ -473,6 +484,10 @@ npm run build          # build production
 npm run start:prod     # chạy bản build
 npm run test           # unit test
 npm run test:e2e       # e2e test
+npm run db:backup      # backup PostgreSQL ra file dump
+npm run db:restore     # restore PostgreSQL tu file dump (can -DumpFile ... -Force)
+npm run env:check:prod # check nhanh env truoc deploy production
+npm run railway:deploy # sync env + deploy api/worker len Railway
 ```
 
 Smoke test turbo end-to-end qua backend:
@@ -493,6 +508,12 @@ Benchmark riêng text-only:
 pwsh -File scripts/benchmark-wan-modes.ps1 -Mode T2V
 ```
 
+Smoke test backup/restore PostgreSQL (container tạm, không đụng DB chính):
+
+```powershell
+pwsh -File scripts/smoke-test-backup-restore.ps1
+```
+
 ## Một số lưu ý khi setup
 
 - `RUN_WORKER` phải là `true` thì worker mới thực sự tiêu thụ queue.
@@ -503,7 +524,13 @@ pwsh -File scripts/benchmark-wan-modes.ps1 -Mode T2V
 
 ## Tài liệu thêm
 
+- [Railway Deploy Runbook](docs/deploy-railway.md)
 - [Auth Email + Google OAuth2 Integration Guide](docs/auth-email-oauth2.md)
 - [Jobs SSE Integration Guide](docs/jobs-sse.md)
 - [Billing Integration Guide (MoMo + payOS)](docs/billing-momo-integration.md)
 - [TurboDiffusion Wan2.2 I2V A14B Report](docs/turbodiffusion-wan22-i2v-a14b-report.md)
+- [Ops Part 1 - Health Readiness](docs/ops-part-1-health-readiness.md)
+- [Ops Part 2 - Rate Limit](docs/ops-part-2-rate-limit.md)
+- [Ops Phase 1 - Backup Restore Runbook](docs/ops-phase-1-backup-restore.md)
+- [Ops Phase 2 - Logging Monitoring Alert](docs/ops-phase-2-logging-monitoring-alert.md)
+- [Ops Rollout Plan (Phased)](docs/ops-rollout-plan-phased.md)
