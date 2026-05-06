@@ -6,12 +6,14 @@ import { UseInterceptors, UploadedFile } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { StorageService } from '../../infra/storage/storage.service';
 import { UploadAssetDto } from './dto/upload-asset.dto';
+import { Throttle } from '@nestjs/throttler';
 
 @Controller('assets')
 export class AssetsController {
   constructor(private readonly assetsService: AssetsService) {}
 
   @Post('upload')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @UseInterceptors(FileInterceptor('file'))
   async uploadAsset(
     @Req() req,

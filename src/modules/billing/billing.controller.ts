@@ -9,6 +9,7 @@ import { BillingService } from './billing.service';
 import { CreatePaymentOrderDto } from './dto/create-payment-order.dto';
 import { MarkPaymentPaidDto } from './dto/mark-payment-paid.dto';
 import { ConfirmPayosWebhookDto } from './dto/confirm-payos-webhook.dto';
+import { SkipThrottle, Throttle } from '@nestjs/throttler';
 
 @ApiTags('billing')
 @ApiBearerAuth('access-token')
@@ -27,6 +28,7 @@ export class BillingController {
   @ApiOperation({
     summary: 'Tạo đơn thanh toán (MoMo, payOS hoặc chuyển khoản)',
   })
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Post('orders')
   createOrder(@CurrentUser() user: JwtPayload, @Body() dto: CreatePaymentOrderDto) {
     return this.billingService.createOrder(user.sub, dto);
@@ -54,6 +56,7 @@ export class BillingController {
   })
   @Public()
   @HttpCode(204)
+  @SkipThrottle()
   @Post('webhooks/momo')
   async momoWebhook(@Body() payload: Record<string, unknown>) {
     await this.billingService.handleMomoIpn(payload);
@@ -65,6 +68,7 @@ export class BillingController {
   })
   @Public()
   @HttpCode(204)
+  @SkipThrottle()
   @Post('webhooks/payos')
   async payosWebhook(@Body() payload: Record<string, unknown>) {
     await this.billingService.handlePayosWebhook(payload);

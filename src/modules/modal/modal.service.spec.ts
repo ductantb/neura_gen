@@ -2,12 +2,19 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { HttpService } from '@nestjs/axios';
 import { ModalService } from './modal.service';
 import { of, throwError } from 'rxjs';
+import { StructuredLoggerService } from 'src/infra/logging/structured-logger.service';
 
 describe('ModalService', () => {
   let service: ModalService;
   const http = {
     post: jest.fn(),
     get: jest.fn(),
+  };
+  const logger = {
+    debug: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
   };
   const originalEnv = process.env;
 
@@ -27,6 +34,10 @@ describe('ModalService', () => {
         {
           provide: HttpService,
           useValue: http,
+        },
+        {
+          provide: StructuredLoggerService,
+          useValue: logger,
         },
       ],
     }).compile();

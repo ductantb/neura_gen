@@ -13,17 +13,23 @@ import { REDIS_CLIENT } from 'src/common/constants';
           enableReadyCheck: false,
         };
 
-// old code: only support REDIS_URL
-//         const url = process.env.REDIS_URL;
-//         if (url && url.trim().length > 0) {
-//           return new Redis(url, commonOpts);
-//         }
+        const url = process.env.REDIS_URL?.trim();
+        if (url) {
+          return new Redis(url, commonOpts);
+        }
 
-// new code: support both REDIS_URL and REDIS_HOST/REDIS_PORT
-        const host = process.env.REDIS_HOST || 'localhost';
-        const port = Number(process.env.REDIS_PORT || 6379);
+        const host = process.env.REDIS_HOST || process.env.REDISHOST || 'localhost';
+        const port = Number(process.env.REDIS_PORT || process.env.REDISPORT || 6379);
+        const username = process.env.REDIS_USER || process.env.REDISUSER;
+        const password = process.env.REDIS_PASSWORD || process.env.REDISPASSWORD;
 
-        return new Redis({ host, port, ...commonOpts });
+        return new Redis({
+          host,
+          port,
+          username: username || undefined,
+          password: password || undefined,
+          ...commonOpts,
+        });
       },
     },
   ],
