@@ -19,6 +19,9 @@ describe('ExploreService', () => {
       findMany: jest.fn(),
     },
   };
+  const storageService = {
+    getDownloadSignedUrl: jest.fn(),
+  };
 
   let service: ExploreService;
 
@@ -51,7 +54,10 @@ describe('ExploreService', () => {
   beforeEach(() => {
     jest.resetAllMocks();
     process.env.EXPLORE_FOR_YOU_DEBUG_ENABLED = 'false';
-    service = new ExploreService(prismaService as any);
+    storageService.getDownloadSignedUrl.mockResolvedValue({
+      url: 'https://signed.example/mock.jpg',
+    });
+    service = new ExploreService(prismaService as any, storageService as any);
   });
 
   afterAll(() => {

@@ -1,7 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { ExploreEventType, Prisma } from '@prisma/client';
+import { AssetRole, Prisma, ExploreEventType } from '@prisma/client';
 import { PrismaService } from 'src/infra/prisma/prisma.service';
+import { StorageService } from 'src/infra/storage/storage.service';
 import { ExploreQueryDto } from './dto/explore-query.dto';
 import { RecordExploreEventDto } from './dto/record-explore-event.dto';
 import { BatchRecordExploreEventsDto } from './dto/batch-record-explore-events.dto';
@@ -23,7 +24,35 @@ const EVENT_WEIGHTS: Record<ExploreEventType, number> = {
 const EXPLORE_ITEM_INCLUDE = {
   assetVersion: {
     include: {
-      asset: true,
+      asset: {
+        include: {
+          job: {
+            select: {
+              assets: {
+                where: {
+                  role: AssetRole.THUMBNAIL,
+                },
+                orderBy: {
+                  createdAt: 'desc',
+                },
+                take: 1,
+                select: {
+                  versions: {
+                    orderBy: {
+                      version: 'desc',
+                    },
+                    take: 1,
+                    select: {
+                      fileUrl: true,
+                      objectKey: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
     },
   },
   post: {
@@ -52,7 +81,10 @@ type ExploreEventInput = Pick<
 export class ExploreService {
   private readonly logger = new Logger(ExploreService.name);
 
-  constructor(private readonly prismaService: PrismaService) {}
+  constructor(
+    private readonly prismaService: PrismaService,
+    private readonly storageService: StorageService,
+  ) {}
 
   async getExplore(query: ExploreQueryDto) {
     const { topic, trending, sort, mode, limit = 20, cursor } = query;
@@ -83,7 +115,7 @@ export class ExploreService {
 
     return {
       mode: resolvedMode,
-      data: items,
+      data: await Promise.all(items.map((item) => this.serializeExploreItem(item))),
       nextCursor: hasNext ? items[items.length - 1].id : null,
       limit,
     };
@@ -354,7 +386,7 @@ export class ExploreService {
 
     return {
       mode: 'for_you',
-      data: page,
+      data: await Promise.all(page.map((item) => this.serializeExploreItem(item))),
       nextCursor: hasNext ? (page[page.length - 1]?.id ?? null) : null,
       limit,
       signals: {
@@ -932,5 +964,37 @@ export class ExploreService {
     if (/(scifi|sci-fi|cyberpunk|future)/.test(normalized)) return 'scifi';
 
     return 'general';
+  }
+
+  private async serializeExploreItem(item: ExploreItemWithRelations) {
+    const thumbnailVersion = item.assetVersion.asset.job?.assets[0]?.versions[0];
+    const thumbnailUrl =
+      (await this.resolveAssetUrl(
+        thumbnailVersion?.objectKey,
+        thumbnailVersion?.fileUrl,
+      )) ??
+      (item.assetVersion.asset.type === 'IMAGE'
+        ? await this.resolveAssetUrl(
+            item.assetVersion.objectKey,
+            item.assetVersion.fileUrl,
+          )
+        : null);
+
+    return {
+      ...item,
+      thumbnailUrl,
+    };
+  }
+
+  private async resolveAssetUrl(
+    objectKey?: string | null,
+    fileUrl?: string | null,
+  ) {
+    if (objectKey) {
+      const signed = await this.storageService.getDownloadSignedUrl(objectKey);
+      return signed.url;
+    }
+
+    return fileUrl ?? null;
   }
 }
