@@ -1,10 +1,32 @@
-import { Controller,Get,MessageEvent,Param,Post,Body,Sse,} from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  MessageEvent,
+  Param,
+  Post,
+  Body,
+  Sse,
+} from '@nestjs/common';
 import { JobsService } from './jobs.service';
 import { CreateVideoJobDto } from './dto/create-job.dto';
 import { CurrentUser } from 'src/common/decorators/user.decorator';
 import { JwtPayload } from 'src/common/guards/jwt-auth.guard';
-import { JobEventsService, type JobStreamEvent } from './job-events.service';
-import { concat, defer, from, map, merge, mergeMap, of, timer, type Observable,} from 'rxjs';
+import {
+  JobEventsService,
+  type JobNotificationEvent,
+  type JobStreamEvent,
+} from './job-events.service';
+import {
+  concat,
+  defer,
+  from,
+  map,
+  merge,
+  mergeMap,
+  of,
+  timer,
+  type Observable,
+} from 'rxjs';
 import { Throttle } from '@nestjs/throttler';
 
 @Controller('jobs')
@@ -28,19 +50,23 @@ export class JobsController {
     return this.jobs.listMyJobs(user.sub);
   }
 
-  @Get(':id')
-  async getJob(
+  @Sse('events/me')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  streamMyNotifications(
     @CurrentUser() user: JwtPayload,
-    @Param('id') id: string,
-  ) {
+  ): Observable<MessageEvent> {
+    return this.jobEvents
+      .streamNotifications(user.sub)
+      .pipe(map((event) => this.toNotificationMessageEvent(event)));
+  }
+
+  @Get(':id')
+  async getJob(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
     return this.jobs.getJobWithAssets(user.sub, id);
   }
 
   @Get(':id/result')
-  async getJobResult(
-    @CurrentUser() user: JwtPayload,
-    @Param('id') id: string,
-  ) {
+  async getJobResult(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
     return this.jobs.getJobResult(user.sub, id);
   }
 
@@ -87,14 +113,20 @@ export class JobsController {
 
   @Post(':id/cancel')
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
-  async cancelJob(
-    @CurrentUser() user: JwtPayload,
-    @Param('id') id: string,
-  ) {
+  async cancelJob(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
     return this.jobs.cancelJob(user.sub, id);
   }
 
   private toMessageEvent(event: JobStreamEvent): MessageEvent {
+    return {
+      type: event.type,
+      data: event.data,
+    };
+  }
+
+  private toNotificationMessageEvent(
+    event: JobNotificationEvent,
+  ): MessageEvent {
     return {
       type: event.type,
       data: event.data,

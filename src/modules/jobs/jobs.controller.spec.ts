@@ -16,6 +16,7 @@ describe('JobsController', () => {
   };
   const jobEventsService = {
     stream: jest.fn(),
+    streamNotifications: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -95,6 +96,48 @@ describe('JobsController', () => {
         type: 'status',
         data: expect.objectContaining({
           progress: 60,
+        }),
+      }),
+    );
+  });
+
+  it('streams user-scoped notification events', async () => {
+    jobEventsService.streamNotifications.mockReturnValue(
+      of({
+        userId: 'user-1',
+        type: 'notification',
+        data: {
+          userId: 'user-1',
+          jobId: 'job-1',
+          kind: 'JOB_COMPLETED',
+          severity: 'success',
+          title: 'Video generation completed',
+          message: 'Your video is ready to view and download.',
+          status: 'COMPLETED',
+          progress: 100,
+          provider: 'modal',
+          modelName: 'wan2.2-ti2v-standard',
+          presetId: 'standard_wan22_ti2v',
+          workflow: 'T2V',
+          errorMessage: null,
+          resultReady: true,
+          occurredAt: '2026-03-31T00:05:00.000Z',
+        },
+      }),
+    );
+
+    const [event] = await firstValueFrom(
+      controller
+        .streamMyNotifications({ sub: 'user-1' } as any)
+        .pipe(take(1), toArray()),
+    );
+
+    expect(event).toEqual(
+      expect.objectContaining({
+        type: 'notification',
+        data: expect.objectContaining({
+          jobId: 'job-1',
+          kind: 'JOB_COMPLETED',
         }),
       }),
     );

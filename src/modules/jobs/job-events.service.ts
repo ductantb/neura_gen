@@ -6,6 +6,16 @@ import { REDIS_CLIENT } from 'src/common/constants';
 
 export type JobEventType = 'snapshot' | 'status' | 'log' | 'heartbeat';
 
+export type JobNotificationSeverity = 'info' | 'success' | 'warning' | 'error';
+
+export type JobNotificationKind =
+  | 'JOB_QUEUED'
+  | 'JOB_RETRYING'
+  | 'JOB_PROVIDER_FALLBACK'
+  | 'JOB_COMPLETED'
+  | 'JOB_FAILED'
+  | 'JOB_CANCELLED';
+
 export type JobStreamLog = {
   jobId: string;
   message: string;
@@ -60,11 +70,35 @@ export type JobHeartbeatPayload = {
   timestamp: string;
 };
 
+export type JobNotificationPayload = {
+  userId: string;
+  jobId: string;
+  kind: JobNotificationKind;
+  severity: JobNotificationSeverity;
+  title: string;
+  message: string;
+  status: JobStatus;
+  progress: number;
+  provider: string | null;
+  modelName: string | null;
+  presetId: string | null;
+  workflow: string | null;
+  errorMessage: string | null;
+  resultReady: boolean;
+  occurredAt: string;
+};
+
 export type JobStreamEvent =
   | { jobId: string; type: 'snapshot'; data: JobSnapshotPayload }
   | { jobId: string; type: 'status'; data: JobStatusPayload }
   | { jobId: string; type: 'log'; data: JobLogPayload }
   | { jobId: string; type: 'heartbeat'; data: JobHeartbeatPayload };
+
+export type JobNotificationEvent = {
+  userId: string;
+  type: 'notification';
+  data: JobNotificationPayload;
+};
 
 type JobEventChannel = {
   subject: Subject<JobStreamEvent>;
@@ -72,10 +106,20 @@ type JobEventChannel = {
   redisSubscribed: boolean;
 };
 
+type JobNotificationChannel = {
+  subject: Subject<JobNotificationEvent>;
+  subscribers: number;
+  redisSubscribed: boolean;
+};
+
 @Injectable()
 export class JobEventsService implements OnModuleDestroy {
   private readonly logger = new Logger(JobEventsService.name);
-  private readonly channels = new Map<string, JobEventChannel>();
+  private readonly jobChannels = new Map<string, JobEventChannel>();
+  private readonly notificationChannels = new Map<
+    string,
+    JobNotificationChannel
+  >();
   private publisher?: Redis;
   private subscriber?: Redis;
 
@@ -83,21 +127,36 @@ export class JobEventsService implements OnModuleDestroy {
 
   stream(jobId: string): Observable<JobStreamEvent> {
     return new Observable<JobStreamEvent>((subscriber) => {
-      const channel = this.ensureChannel(jobId);
+      const channel = this.ensureJobChannel(jobId);
       channel.subscribers += 1;
 
       const subscription = channel.subject.subscribe(subscriber);
-      void this.ensureRedisSubscription(jobId);
+      void this.ensureJobRedisSubscription(jobId);
 
       return () => {
         subscription.unsubscribe();
-        void this.releaseRedisSubscription(jobId);
+        void this.releaseJobRedisSubscription(jobId);
+      };
+    });
+  }
+
+  streamNotifications(userId: string): Observable<JobNotificationEvent> {
+    return new Observable<JobNotificationEvent>((subscriber) => {
+      const channel = this.ensureNotificationChannel(userId);
+      channel.subscribers += 1;
+
+      const subscription = channel.subject.subscribe(subscriber);
+      void this.ensureNotificationRedisSubscription(userId);
+
+      return () => {
+        subscription.unsubscribe();
+        void this.releaseNotificationRedisSubscription(userId);
       };
     });
   }
 
   emitSnapshot(data: JobSnapshotPayload) {
-    this.emit({
+    this.emitJobEvent({
       jobId: data.jobId,
       type: 'snapshot',
       data,
@@ -105,7 +164,7 @@ export class JobEventsService implements OnModuleDestroy {
   }
 
   emitStatus(data: JobStatusPayload) {
-    this.emit({
+    this.emitJobEvent({
       jobId: data.jobId,
       type: 'status',
       data,
@@ -113,7 +172,7 @@ export class JobEventsService implements OnModuleDestroy {
   }
 
   emitLog(data: JobLogPayload) {
-    this.emit({
+    this.emitJobEvent({
       jobId: data.jobId,
       type: 'log',
       data,
@@ -121,7 +180,7 @@ export class JobEventsService implements OnModuleDestroy {
   }
 
   emitHeartbeat(jobId: string) {
-    this.emit({
+    this.emitJobEvent({
       jobId,
       type: 'heartbeat',
       data: {
@@ -131,7 +190,15 @@ export class JobEventsService implements OnModuleDestroy {
     });
   }
 
-  private emit(event: JobStreamEvent) {
+  emitNotification(data: JobNotificationPayload) {
+    this.emitNotificationEvent({
+      userId: data.userId,
+      type: 'notification',
+      data,
+    });
+  }
+
+  private emitJobEvent(event: JobStreamEvent) {
     this.publish(event).catch((error: unknown) => {
       const message =
         error instanceof Error ? error.message : 'Unknown Redis publish error';
@@ -141,8 +208,18 @@ export class JobEventsService implements OnModuleDestroy {
     });
   }
 
-  private ensureChannel(jobId: string): JobEventChannel {
-    const existing = this.channels.get(jobId);
+  private emitNotificationEvent(event: JobNotificationEvent) {
+    this.publish(event).catch((error: unknown) => {
+      const message =
+        error instanceof Error ? error.message : 'Unknown Redis publish error';
+      this.logger.error(
+        `Failed to publish notification event for ${event.userId}: ${message}`,
+      );
+    });
+  }
+
+  private ensureJobChannel(jobId: string): JobEventChannel {
+    const existing = this.jobChannels.get(jobId);
     if (existing) {
       return existing;
     }
@@ -153,23 +230,50 @@ export class JobEventsService implements OnModuleDestroy {
       redisSubscribed: false,
     };
 
-    this.channels.set(jobId, channel);
+    this.jobChannels.set(jobId, channel);
     return channel;
   }
 
-  private async ensureRedisSubscription(jobId: string) {
-    const channel = this.ensureChannel(jobId);
+  private ensureNotificationChannel(userId: string): JobNotificationChannel {
+    const existing = this.notificationChannels.get(userId);
+    if (existing) {
+      return existing;
+    }
+
+    const channel: JobNotificationChannel = {
+      subject: new Subject<JobNotificationEvent>(),
+      subscribers: 0,
+      redisSubscribed: false,
+    };
+
+    this.notificationChannels.set(userId, channel);
+    return channel;
+  }
+
+  private async ensureJobRedisSubscription(jobId: string) {
+    const channel = this.ensureJobChannel(jobId);
     if (channel.redisSubscribed) {
       return;
     }
 
     const subscriber = this.getSubscriber();
-    await subscriber.subscribe(this.getRedisChannel(jobId));
+    await subscriber.subscribe(this.getJobRedisChannel(jobId));
     channel.redisSubscribed = true;
   }
 
-  private async releaseRedisSubscription(jobId: string) {
-    const channel = this.channels.get(jobId);
+  private async ensureNotificationRedisSubscription(userId: string) {
+    const channel = this.ensureNotificationChannel(userId);
+    if (channel.redisSubscribed) {
+      return;
+    }
+
+    const subscriber = this.getSubscriber();
+    await subscriber.subscribe(this.getNotificationRedisChannel(userId));
+    channel.redisSubscribed = true;
+  }
+
+  private async releaseJobRedisSubscription(jobId: string) {
+    const channel = this.jobChannels.get(jobId);
     if (!channel) {
       return;
     }
@@ -181,7 +285,7 @@ export class JobEventsService implements OnModuleDestroy {
 
     try {
       if (channel.redisSubscribed) {
-        await this.getSubscriber().unsubscribe(this.getRedisChannel(jobId));
+        await this.getSubscriber().unsubscribe(this.getJobRedisChannel(jobId));
       }
     } catch (error) {
       const message =
@@ -194,16 +298,50 @@ export class JobEventsService implements OnModuleDestroy {
     } finally {
       channel.redisSubscribed = false;
       channel.subject.complete();
-      this.channels.delete(jobId);
+      this.jobChannels.delete(jobId);
     }
   }
 
-  private async publish(event: JobStreamEvent) {
+  private async releaseNotificationRedisSubscription(userId: string) {
+    const channel = this.notificationChannels.get(userId);
+    if (!channel) {
+      return;
+    }
+
+    channel.subscribers -= 1;
+    if (channel.subscribers > 0) {
+      return;
+    }
+
+    try {
+      if (channel.redisSubscribed) {
+        await this.getSubscriber().unsubscribe(
+          this.getNotificationRedisChannel(userId),
+        );
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Unknown Redis unsubscribe error';
+      this.logger.error(
+        `Failed to unsubscribe notification Redis channel for ${userId}: ${message}`,
+      );
+    } finally {
+      channel.redisSubscribed = false;
+      channel.subject.complete();
+      this.notificationChannels.delete(userId);
+    }
+  }
+
+  private async publish(event: JobStreamEvent | JobNotificationEvent) {
     const publisher = this.getPublisher();
-    await publisher.publish(
-      this.getRedisChannel(event.jobId),
-      JSON.stringify(event),
-    );
+    const channelName =
+      'jobId' in event
+        ? this.getJobRedisChannel(event.jobId)
+        : this.getNotificationRedisChannel(event.userId);
+
+    await publisher.publish(channelName, JSON.stringify(event));
   }
 
   private getPublisher() {
@@ -233,12 +371,23 @@ export class JobEventsService implements OnModuleDestroy {
     channelName: string,
     message: string,
   ) => {
+    if (channelName.startsWith('jobs:events:')) {
+      this.forwardJobEvent(channelName, message);
+      return;
+    }
+
+    if (channelName.startsWith('jobs:notifications:')) {
+      this.forwardNotificationEvent(channelName, message);
+    }
+  };
+
+  private forwardJobEvent(channelName: string, message: string) {
     const jobId = this.getJobIdFromChannel(channelName);
     if (!jobId) {
       return;
     }
 
-    const channel = this.channels.get(jobId);
+    const channel = this.jobChannels.get(jobId);
     if (!channel) {
       return;
     }
@@ -253,10 +402,37 @@ export class JobEventsService implements OnModuleDestroy {
         `Failed to parse Redis SSE payload for ${jobId}: ${reason}`,
       );
     }
-  };
+  }
 
-  private getRedisChannel(jobId: string) {
+  private forwardNotificationEvent(channelName: string, message: string) {
+    const userId = this.getUserIdFromNotificationChannel(channelName);
+    if (!userId) {
+      return;
+    }
+
+    const channel = this.notificationChannels.get(userId);
+    if (!channel) {
+      return;
+    }
+
+    try {
+      const event = JSON.parse(message) as JobNotificationEvent;
+      channel.subject.next(event);
+    } catch (error) {
+      const reason =
+        error instanceof Error ? error.message : 'Unknown JSON parse error';
+      this.logger.error(
+        `Failed to parse Redis notification payload for ${userId}: ${reason}`,
+      );
+    }
+  }
+
+  private getJobRedisChannel(jobId: string) {
     return `jobs:events:${jobId}`;
+  }
+
+  private getNotificationRedisChannel(userId: string) {
+    return `jobs:notifications:${userId}`;
   }
 
   private getJobIdFromChannel(channelName: string) {
@@ -266,11 +442,23 @@ export class JobEventsService implements OnModuleDestroy {
       : null;
   }
 
+  private getUserIdFromNotificationChannel(channelName: string) {
+    const prefix = 'jobs:notifications:';
+    return channelName.startsWith(prefix)
+      ? channelName.slice(prefix.length)
+      : null;
+  }
+
   async onModuleDestroy() {
-    for (const channel of this.channels.values()) {
+    for (const channel of this.jobChannels.values()) {
       channel.subject.complete();
     }
-    this.channels.clear();
+    this.jobChannels.clear();
+
+    for (const channel of this.notificationChannels.values()) {
+      channel.subject.complete();
+    }
+    this.notificationChannels.clear();
 
     if (this.subscriber) {
       this.subscriber.off('message', this.handleRedisMessage);

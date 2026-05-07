@@ -52,6 +52,7 @@ describe('VideoWorker', () => {
   const jobEvents = {
     emitStatus: jest.fn(),
     emitLog: jest.fn(),
+    emitNotification: jest.fn(),
   };
 
   const structuredLogger = {
@@ -157,6 +158,13 @@ describe('VideoWorker', () => {
         message: expect.stringContaining('retrying'),
       }),
     );
+    expect(jobEvents.emitNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'user-1',
+        jobId: 'job-1',
+        kind: 'JOB_RETRYING',
+      }),
+    );
     expect(prisma.creditTransaction.findFirst).not.toHaveBeenCalled();
   });
 
@@ -205,6 +213,13 @@ describe('VideoWorker', () => {
       expect.objectContaining({
         jobId: 'job-1',
         message: expect.stringContaining('failed permanently'),
+      }),
+    );
+    expect(jobEvents.emitNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'user-1',
+        jobId: 'job-1',
+        kind: 'JOB_FAILED',
       }),
     );
   });
@@ -321,14 +336,11 @@ describe('VideoWorker', () => {
     modal.generateVideo.mockResolvedValue({ status: 'ok', provider: 'modal' });
 
     await expect(
-      worker['executeProviderPlan'](
-        ['vast', 'modal'],
-        {
-          jobId: 'job-1',
-          prompt: 'prompt',
-          presetId: 'preview_ltx_i2v',
-        },
-      ),
+      worker['executeProviderPlan'](['vast', 'modal'], {
+        jobId: 'job-1',
+        prompt: 'prompt',
+        presetId: 'preview_ltx_i2v',
+      }),
     ).resolves.toEqual(
       expect.objectContaining({
         provider: 'modal',
@@ -343,5 +355,6 @@ describe('VideoWorker', () => {
         presetId: 'preview_ltx_i2v',
       }),
     );
+    expect(jobEvents.emitNotification).not.toHaveBeenCalled();
   });
 });

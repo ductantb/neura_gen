@@ -454,7 +454,23 @@ GET /jobs/:id/events
 Authorization: Bearer <access_token>
 ```
 
-Tài liệu chi tiết nằm ở [docs/jobs-sse.md](docs/jobs-sse.md).
+Stream này dùng cho màn chi tiết 1 job, gồm `snapshot`, `status`, `log`, `heartbeat`.
+
+Để hiện toast / banner notification toàn cục cho user hiện tại, mở thêm SSE:
+
+```http
+GET /jobs/events/me
+Authorization: Bearer <access_token>
+```
+
+Event trả về có `type: notification` với các `kind` chính:
+
+- `JOB_QUEUED`
+- `JOB_RETRYING`
+- `JOB_PROVIDER_FALLBACK`
+- `JOB_COMPLETED`
+- `JOB_FAILED`
+- `JOB_CANCELLED`
 
 ### 5. Lấy kết quả
 

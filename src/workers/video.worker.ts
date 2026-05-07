@@ -10,7 +10,10 @@ import {
 } from '@prisma/client';
 import { StorageService } from 'src/infra/storage/storage.service';
 import { PrismaService } from 'src/infra/prisma/prisma.service';
-import { JobEventsService } from 'src/modules/jobs/job-events.service';
+import {
+  JobEventsService,
+  type JobNotificationPayload,
+} from 'src/modules/jobs/job-events.service';
 import { ModalService } from 'src/modules/modal/modal.service';
 import { VastService } from 'src/modules/modal/vast.service';
 import { StructuredLoggerService } from 'src/infra/logging/structured-logger.service';
@@ -143,7 +146,11 @@ export class VideoWorker implements OnModuleDestroy {
     });
 
     const level: 'info' | 'warn' | 'error' =
-      status === JobStatus.FAILED ? 'error' : status === JobStatus.CANCELLED ? 'warn' : 'info';
+      status === JobStatus.FAILED
+        ? 'error'
+        : status === JobStatus.CANCELLED
+          ? 'warn'
+          : 'info';
 
     this.structuredLogger[level]('worker.job.status', {
       jobId: updatedJob.id,
@@ -152,6 +159,48 @@ export class VideoWorker implements OnModuleDestroy {
       provider: extra?.provider ?? updatedJob.provider ?? null,
       providerAttempt: extra?.providerAttempt ?? null,
       fallbackTriggered: extra?.fallbackTriggered ?? false,
+    });
+  }
+
+  private emitNotification(
+    job: {
+      id: string;
+      userId: string;
+      status: JobStatus;
+      progress: number;
+      provider: string | null;
+      modelName: string | null;
+      extraConfig: Prisma.JsonValue | null;
+    },
+    details: {
+      kind: JobNotificationPayload['kind'];
+      severity: JobNotificationPayload['severity'];
+      title: string;
+      message: string;
+      status?: JobStatus;
+      progress?: number;
+      provider?: string | null;
+      errorMessage?: string | null;
+      resultReady: boolean;
+      occurredAt?: Date;
+    },
+  ) {
+    this.jobEvents.emitNotification({
+      userId: job.userId,
+      jobId: job.id,
+      kind: details.kind,
+      severity: details.severity,
+      title: details.title,
+      message: details.message,
+      status: details.status ?? job.status,
+      progress: details.progress ?? job.progress,
+      provider: details.provider ?? job.provider ?? null,
+      modelName: job.modelName,
+      presetId: this.extractExtraConfigString(job.extraConfig, 'presetId'),
+      workflow: this.resolveExecutionWorkflow(job.extraConfig),
+      errorMessage: details.errorMessage ?? null,
+      resultReady: details.resultReady,
+      occurredAt: (details.occurredAt ?? new Date()).toISOString(),
     });
   }
 
@@ -487,6 +536,17 @@ export class VideoWorker implements OnModuleDestroy {
         fallbackTriggered: providerExecution.fallbackTriggered,
       });
 
+      this.emitNotification(job, {
+        kind: 'JOB_COMPLETED',
+        severity: 'success',
+        title: 'Video generation completed',
+        message: 'Your video is ready to view and download.',
+        status: JobStatus.COMPLETED,
+        progress: 100,
+        provider: providerExecution.provider,
+        resultReady: true,
+      });
+
       this.structuredLogger.info('worker.job.completed', {
         jobId,
         provider: providerExecution.provider,
@@ -534,6 +594,17 @@ export class VideoWorker implements OnModuleDestroy {
           `Attempt ${bullJob.attemptsMade + 1} failed, retrying: ${message}`,
         );
 
+        this.emitNotification(job, {
+          kind: 'JOB_RETRYING',
+          severity: 'warning',
+          title: 'Video generation retrying',
+          message: `Attempt ${bullJob.attemptsMade + 1} failed. The system is retrying automatically.`,
+          status: JobStatus.QUEUED,
+          progress: Math.max(currentProgress, 1),
+          errorMessage: message,
+          resultReady: false,
+        });
+
         this.structuredLogger.warn('worker.job.retrying', {
           jobId,
           message,
@@ -556,6 +627,17 @@ export class VideoWorker implements OnModuleDestroy {
       await this.refundFailedJob(job, message);
 
       await this.log(jobId, `Job failed permanently: ${message}`);
+      this.emitNotification(job, {
+        kind: 'JOB_FAILED',
+        severity: 'error',
+        title: 'Video generation failed',
+        message:
+          'The job ended with an error. Credits were refunded if they had been charged.',
+        status: JobStatus.FAILED,
+        progress: Math.max(currentProgress, 1),
+        errorMessage: message,
+        resultReady: false,
+      });
       this.structuredLogger.error('worker.job.failed', {
         jobId,
         message,
@@ -592,7 +674,11 @@ export class VideoWorker implements OnModuleDestroy {
     let lastRetryableError: unknown = null;
     let hasFallback = false;
 
-    for (let providerIndex = 0; providerIndex < providerPlan.length; providerIndex += 1) {
+    for (
+      let providerIndex = 0;
+      providerIndex < providerPlan.length;
+      providerIndex += 1
+    ) {
       const provider = providerPlan[providerIndex];
       const hasNextProvider = providerIndex < providerPlan.length - 1;
       if (provider === 'vast' && !(await this.shouldUseVastProvider())) {
@@ -642,6 +728,31 @@ export class VideoWorker implements OnModuleDestroy {
             }
 
             hasFallback = true;
+            if (payload.userId) {
+              this.emitNotification(
+                {
+                  id: payload.jobId,
+                  userId: payload.userId,
+                  status: JobStatus.PROCESSING,
+                  progress: 30,
+                  provider,
+                  modelName: payload.modelName ?? null,
+                  extraConfig: {
+                    presetId: payload.presetId,
+                    workflow: payload.workflow,
+                  },
+                },
+                {
+                  kind: 'JOB_PROVIDER_FALLBACK',
+                  severity: 'warning',
+                  title: 'Switching video provider',
+                  message: `Provider ${provider} returned an unrecoverable error. The system is switching to the fallback provider.`,
+                  provider,
+                  errorMessage: providerError.message,
+                  resultReady: false,
+                },
+              );
+            }
             await this.log(
               payload.jobId,
               `Provider ${provider} returned non-retryable error, switching to fallback if available: ${providerError.message}`,
@@ -669,6 +780,31 @@ export class VideoWorker implements OnModuleDestroy {
 
           lastRetryableError = error;
           hasFallback = true;
+          if (payload.userId) {
+            this.emitNotification(
+              {
+                id: payload.jobId,
+                userId: payload.userId,
+                status: JobStatus.PROCESSING,
+                progress: 30,
+                provider,
+                modelName: payload.modelName ?? null,
+                extraConfig: {
+                  presetId: payload.presetId,
+                  workflow: payload.workflow,
+                },
+              },
+              {
+                kind: 'JOB_PROVIDER_FALLBACK',
+                severity: 'warning',
+                title: 'Switching video provider',
+                message: `Provider ${provider} exhausted its retries. The system is switching to the fallback provider.`,
+                provider,
+                errorMessage: providerError.message,
+                resultReady: false,
+              },
+            );
+          }
           await this.log(
             payload.jobId,
             `Provider ${provider} exhausted retries, switching to fallback if available: ${providerError.message}`,

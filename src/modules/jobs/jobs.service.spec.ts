@@ -1,4 +1,7 @@
-import { ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { JobStatus } from '@prisma/client';
 import { JobEventsService } from './job-events.service';
 import { JobsService } from './jobs.service';
@@ -51,6 +54,7 @@ describe('JobsService', () => {
     emitStatus: jest.fn(),
     emitLog: jest.fn(),
     emitSnapshot: jest.fn(),
+    emitNotification: jest.fn(),
   };
 
   beforeEach(() => {
@@ -124,7 +128,9 @@ describe('JobsService', () => {
             update: prisma.userDailyUsage.update,
           },
           userCredit: {
-            findUnique: jest.fn().mockResolvedValue({ userId: 'user-1', balance: 100 }),
+            findUnique: jest
+              .fn()
+              .mockResolvedValue({ userId: 'user-1', balance: 100 }),
             update: prisma.userCredit.update,
           },
           creditTransaction: {
@@ -180,6 +186,13 @@ describe('JobsService', () => {
         },
       }),
     );
+    expect(jobEvents.emitNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'user-1',
+        jobId: 'job-1',
+        kind: 'JOB_FAILED',
+      }),
+    );
   });
 
   it('uses the selected preset metadata when creating a video job', async () => {
@@ -221,7 +234,9 @@ describe('JobsService', () => {
             update: prisma.userDailyUsage.update,
           },
           userCredit: {
-            findUnique: jest.fn().mockResolvedValue({ userId: 'user-1', balance: 100 }),
+            findUnique: jest
+              .fn()
+              .mockResolvedValue({ userId: 'user-1', balance: 100 }),
             update: prisma.userCredit.update,
           },
           creditTransaction: {
@@ -272,6 +287,13 @@ describe('JobsService', () => {
         presetId: 'standard_wan22_ti2v',
       }),
     );
+    expect(jobEvents.emitNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'user-1',
+        jobId: 'job-2',
+        kind: 'JOB_QUEUED',
+      }),
+    );
   });
 
   it('uses the default Wan TI2V preset when no preset is provided', async () => {
@@ -313,7 +335,9 @@ describe('JobsService', () => {
             update: prisma.userDailyUsage.update,
           },
           userCredit: {
-            findUnique: jest.fn().mockResolvedValue({ userId: 'user-1', balance: 100 }),
+            findUnique: jest
+              .fn()
+              .mockResolvedValue({ userId: 'user-1', balance: 100 }),
             update: prisma.userCredit.update,
           },
           creditTransaction: {
@@ -393,7 +417,9 @@ describe('JobsService', () => {
             update: prisma.userDailyUsage.update,
           },
           userCredit: {
-            findUnique: jest.fn().mockResolvedValue({ userId: 'user-1', balance: 100 }),
+            findUnique: jest
+              .fn()
+              .mockResolvedValue({ userId: 'user-1', balance: 100 }),
             update: prisma.userCredit.update,
           },
           creditTransaction: {
@@ -472,7 +498,9 @@ describe('JobsService', () => {
             update: prisma.userDailyUsage.update,
           },
           userCredit: {
-            findUnique: jest.fn().mockResolvedValue({ userId: 'user-1', balance: 100 }),
+            findUnique: jest
+              .fn()
+              .mockResolvedValue({ userId: 'user-1', balance: 100 }),
             update: prisma.userCredit.update,
           },
           creditTransaction: {
@@ -569,7 +597,9 @@ describe('JobsService', () => {
             update: prisma.userDailyUsage.update,
           },
           userCredit: {
-            findUnique: jest.fn().mockResolvedValue({ userId: 'user-1', balance: 100 }),
+            findUnique: jest
+              .fn()
+              .mockResolvedValue({ userId: 'user-1', balance: 100 }),
             update: prisma.userCredit.update,
           },
           creditTransaction: {
@@ -654,7 +684,9 @@ describe('JobsService', () => {
             update: prisma.userDailyUsage.update,
           },
           userCredit: {
-            findUnique: jest.fn().mockResolvedValue({ userId: 'user-1', balance: 100 }),
+            findUnique: jest
+              .fn()
+              .mockResolvedValue({ userId: 'user-1', balance: 100 }),
             update: prisma.userCredit.update,
           },
           creditTransaction: {
@@ -758,7 +790,9 @@ describe('JobsService', () => {
             update: prisma.userDailyUsage.update,
           },
           userCredit: {
-            findUnique: jest.fn().mockResolvedValue({ userId: 'user-1', balance: 100 }),
+            findUnique: jest
+              .fn()
+              .mockResolvedValue({ userId: 'user-1', balance: 100 }),
             update: prisma.userCredit.update,
           },
           creditTransaction: {
@@ -866,7 +900,9 @@ describe('JobsService', () => {
             update: prisma.userDailyUsage.update,
           },
           userCredit: {
-            findUnique: jest.fn().mockResolvedValue({ userId: 'user-1', balance: 100 }),
+            findUnique: jest
+              .fn()
+              .mockResolvedValue({ userId: 'user-1', balance: 100 }),
             update: prisma.userCredit.update,
           },
           creditTransaction: {
@@ -1012,7 +1048,9 @@ describe('JobsService', () => {
             update: prisma.userDailyUsage.update,
           },
           userCredit: {
-            findUnique: jest.fn().mockResolvedValue({ userId: 'user-1', balance: 100 }),
+            findUnique: jest
+              .fn()
+              .mockResolvedValue({ userId: 'user-1', balance: 100 }),
             update: prisma.userCredit.update,
           },
           creditTransaction: {
@@ -1191,5 +1229,12 @@ describe('JobsService', () => {
       }),
     );
     expect(prisma.userCredit.update).toHaveBeenCalledTimes(1);
+    expect(jobEvents.emitNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'user-1',
+        jobId: 'job-1',
+        kind: 'JOB_CANCELLED',
+      }),
+    );
   });
 });

@@ -20,6 +20,7 @@ import { StorageService } from 'src/infra/storage/storage.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import {
   JobEventsService,
+  type JobNotificationPayload,
   type JobSnapshotPayload,
 } from './job-events.service';
 import { CreateVideoJobDto } from './dto/create-job.dto';
@@ -356,6 +357,32 @@ export class JobsService {
         this.jobEvents.emitLog(failedLogPayload);
       }
 
+      this.jobEvents.emitNotification(
+        this.buildNotificationPayload(
+          {
+            id: createdJob.id,
+            userId: createdJob.userId,
+            status: JobStatus.FAILED,
+            progress: 0,
+            errorMessage: `Queue enqueue failed: ${message}`,
+            provider: createdJob.provider,
+            modelName: createdJob.modelName,
+            extraConfig: {
+              ...inputAssetMetadata,
+              presetId: preset.id,
+              workflow: executionWorkflow,
+            },
+          },
+          {
+            kind: 'JOB_FAILED',
+            severity: 'error',
+            title: 'Video generation failed',
+            message: 'The job could not be queued. Credits were refunded.',
+            resultReady: false,
+          },
+        ),
+      );
+
       throw new ServiceUnavailableException(
         'Failed to queue video job. Credits were refunded.',
       );
@@ -405,6 +432,32 @@ export class JobsService {
     if (queuedLogPayload) {
       this.jobEvents.emitLog(queuedLogPayload);
     }
+
+    this.jobEvents.emitNotification(
+      this.buildNotificationPayload(
+        {
+          id: createdJob.id,
+          userId: createdJob.userId,
+          status: JobStatus.QUEUED,
+          progress: 1,
+          errorMessage: null,
+          provider: createdJob.provider,
+          modelName: createdJob.modelName,
+          extraConfig: {
+            ...inputAssetMetadata,
+            presetId: preset.id,
+            workflow: executionWorkflow,
+          },
+        },
+        {
+          kind: 'JOB_QUEUED',
+          severity: 'info',
+          title: 'Video generation queued',
+          message: 'Your video request is waiting for an available worker.',
+          resultReady: false,
+        },
+      ),
+    );
 
     return {
       jobId: createdJob.id,
@@ -800,6 +853,29 @@ export class JobsService {
       this.jobEvents.emitLog(cancelledLogPayload);
     }
 
+    this.jobEvents.emitNotification(
+      this.buildNotificationPayload(
+        {
+          id: job.id,
+          userId: job.userId,
+          status: JobStatus.CANCELLED,
+          progress: job.progress,
+          errorMessage: 'Cancelled by user',
+          provider: job.provider ?? null,
+          modelName: job.modelName ?? null,
+          extraConfig: job.extraConfig ?? null,
+        },
+        {
+          kind: 'JOB_CANCELLED',
+          severity: 'warning',
+          title: 'Video generation cancelled',
+          message:
+            'The job was cancelled and any charged credits were refunded.',
+          resultReady: false,
+        },
+      ),
+    );
+
     return {
       jobId: job.id,
       status: JobStatus.CANCELLED,
@@ -882,6 +958,45 @@ export class JobsService {
       jobId: log.jobId,
       message: log.message,
       createdAt: log.createdAt.toISOString(),
+    };
+  }
+
+  private buildNotificationPayload(
+    job: {
+      id: string;
+      userId: string;
+      status: JobStatus;
+      progress: number;
+      errorMessage: string | null;
+      provider: string | null;
+      modelName: string | null;
+      extraConfig: Prisma.JsonValue | null;
+    },
+    details: {
+      kind: JobNotificationPayload['kind'];
+      severity: JobNotificationPayload['severity'];
+      title: string;
+      message: string;
+      occurredAt?: Date;
+      resultReady: boolean;
+    },
+  ): JobNotificationPayload {
+    return {
+      userId: job.userId,
+      jobId: job.id,
+      kind: details.kind,
+      severity: details.severity,
+      title: details.title,
+      message: details.message,
+      status: job.status,
+      progress: job.progress,
+      provider: job.provider,
+      modelName: job.modelName,
+      presetId: this.extractPresetId(job.extraConfig),
+      workflow: this.extractWorkflow(job.extraConfig),
+      errorMessage: job.errorMessage,
+      resultReady: details.resultReady,
+      occurredAt: (details.occurredAt ?? new Date()).toISOString(),
     };
   }
 
