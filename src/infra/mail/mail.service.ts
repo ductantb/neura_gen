@@ -15,18 +15,42 @@ export class MailService {
   private readonly transporter: nodemailer.Transporter | null;
   private readonly from: string;
   private readonly enabled: boolean;
+  private runtimeDisabledReason: string | null = null;
 
   constructor(private readonly configService: ConfigService) {
-    const host = this.configService.get<string>('MAIL_HOST') ?? 'smtp.gmail.com';
-    const port = Number(this.configService.get<string>('MAIL_PORT') ?? '587');
-    const secure = String(this.configService.get<string>('MAIL_SECURE') ?? 'false') === 'true';
-    const user = this.configService.get<string>('MAIL_USER');
-    const pass = this.configService.get<string>('MAIL_APP_PASSWORD');
+    const host =
+      this.normalizeOptionalString(this.configService.get<string>('MAIL_HOST')) ??
+      'smtp.gmail.com';
+    const port = Number(
+      this.normalizeOptionalString(this.configService.get<string>('MAIL_PORT')) ??
+        '587',
+    );
+    const secure =
+      String(
+        this.normalizeOptionalString(this.configService.get<string>('MAIL_SECURE')) ??
+          'false',
+      ) === 'true';
+    const user = this.normalizeOptionalString(
+      this.configService.get<string>('MAIL_USER'),
+    );
+    const pass = this.normalizeMailAppPassword(
+      this.configService.get<string>('MAIL_APP_PASSWORD'),
+    );
+    const mailEnabled =
+      this.normalizeOptionalString(this.configService.get<string>('MAIL_ENABLED')) !==
+      'false';
 
     this.from =
-      this.configService.get<string>('MAIL_FROM') ??
+      this.normalizeOptionalString(this.configService.get<string>('MAIL_FROM')) ??
       user ??
       'Neura Gen <no-reply@neuragen.local>';
+
+    if (!mailEnabled) {
+      this.enabled = false;
+      this.transporter = null;
+      this.logger.warn('Mail service is disabled because MAIL_ENABLED=false.');
+      return;
+    }
 
     if (!user || !pass) {
       this.enabled = false;
@@ -50,12 +74,19 @@ export class MailService {
   }
 
   isEnabled(): boolean {
-    return this.enabled;
+    return this.enabled && !this.runtimeDisabledReason;
   }
 
   async sendMail(payload: SendMailPayload): Promise<boolean> {
-    if (!this.transporter) {
+    if (!this.transporter || !this.enabled) {
       this.logger.warn(`Skipped email to ${payload.to} because mail transport is disabled.`);
+      return false;
+    }
+
+    if (this.runtimeDisabledReason) {
+      this.logger.warn(
+        `Skipped email to ${payload.to} because mail transport is disabled at runtime: ${this.runtimeDisabledReason}`,
+      );
       return false;
     }
 
@@ -71,6 +102,15 @@ export class MailService {
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (this.isAuthenticationError(message)) {
+        this.runtimeDisabledReason =
+          'SMTP authentication failed. Check MAIL_USER, MAIL_APP_PASSWORD, and Gmail App Password / 2FA settings.';
+        this.logger.error(
+          `Failed to send email to ${payload.to}: ${message}. Mail service will be disabled for the rest of this process.`,
+        );
+        return false;
+      }
+
       this.logger.error(`Failed to send email to ${payload.to}: ${message}`);
       return false;
     }
@@ -111,5 +151,33 @@ export class MailService {
     const normalizedBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
 
     return `${normalizedBase}/reset-password?token=${encodeURIComponent(resetToken)}`;
+  }
+
+  private normalizeOptionalString(value?: string | null): string | null {
+    if (typeof value !== 'string') {
+      return null;
+    }
+
+    const normalized = value.trim();
+    return normalized.length > 0 ? normalized : null;
+  }
+
+  private normalizeMailAppPassword(value?: string | null): string | null {
+    if (typeof value !== 'string') {
+      return null;
+    }
+
+    const normalized = value.replace(/\s+/g, '');
+    return normalized.length > 0 ? normalized : null;
+  }
+
+  private isAuthenticationError(message: string): boolean {
+    const normalized = message.toLowerCase();
+    return (
+      normalized.includes('invalid login') ||
+      normalized.includes('username and password not accepted') ||
+      normalized.includes('authentication unsuccessful') ||
+      normalized.includes('535')
+    );
   }
 }

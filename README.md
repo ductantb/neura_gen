@@ -122,6 +122,7 @@ S3_KEY_PREFIX=neuragen
 MAIL_HOST=smtp.gmail.com
 MAIL_PORT=587
 MAIL_SECURE=false
+MAIL_ENABLED=true
 MAIL_USER=your_gmail_address
 MAIL_APP_PASSWORD=your_gmail_app_password
 MAIL_FROM="Neura Gen <your_gmail_address>"
@@ -179,6 +180,7 @@ PAYOS_PARTNER_CODE=optional_partner_code
 - `OPS_METRICS_TOKEN`: token bảo vệ endpoint `GET /ops/metrics` (đọc từ header `x-ops-token`)
 - `AWS_*`, `AWS_S3_BUCKET`: cấu hình lưu file lên S3
 - `MAIL_*`: cấu hình Gmail SMTP để gửi email auth
+- `MAIL_ENABLED=false`: tắt hẳn luồng gửi mail ở local/dev nếu chưa có SMTP hợp lệ
 - `FRONTEND_URL`: URL frontend dùng để tạo reset link
 - `PASSWORD_RESET_TOKEN_TTL_MINUTES`: thời gian hết hạn token reset password
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL`: cấu hình đăng nhập nhanh bằng Google OAuth2
@@ -537,6 +539,10 @@ pwsh -File scripts/smoke-test-backup-restore.ps1
 - `DATABASE_URL` và `REDIS_HOST` khác nhau giữa chạy local và chạy bằng Docker Compose.
 - Repo đang đọc `.env` trực tiếp từ thư mục gốc bằng `ConfigModule.forRoot`.
 - S3 credentials không nên commit thật lên git. Nên dùng key riêng cho môi trường dev.
+- Với Gmail SMTP:
+  - cần bật 2FA cho tài khoản Gmail
+  - cần tạo App Password riêng cho Mail
+  - backend hiện tự bỏ khoảng trắng trong `MAIL_APP_PASSWORD`, nên có thể dán cả dạng `xxxx xxxx xxxx xxxx`
 
 ## Tài liệu thêm
 
