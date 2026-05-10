@@ -54,8 +54,10 @@ export class AuthService {
   ) {}
 
   async register(email: string, password: string): Promise<AuthResponseDto> {
+    const normalizedEmail = this.normalizeEmail(email);
+
     const existingUser = await this.prisma.user.findUnique({
-      where: { email },
+      where: { email: normalizedEmail },
       select: { id: true },
     });
 
@@ -67,9 +69,9 @@ export class AuthService {
 
     const user = await this.prisma.user.create({
       data: {
-        email,
+        email: normalizedEmail,
         password: hashed,
-        username: email.split('@')[0],
+        username: normalizedEmail.split('@')[0],
         credits: {
           create: {
             balance: 100,
@@ -89,8 +91,10 @@ export class AuthService {
   }
 
   async login(email: string, password: string): Promise<AuthResponseDto> {
+    const normalizedEmail = this.normalizeEmail(email);
+
     const user = await this.prisma.user.findUnique({
-      where: { email },
+      where: { email: normalizedEmail },
     });
 
     if (!user) {
@@ -411,6 +415,13 @@ export class AuthService {
       throw new ForbiddenException('Old password is incorrect');
     }
 
+    const isSamePassword = await comparePassword(newPassword, user.password);
+    if (isSamePassword) {
+      throw new BadRequestException(
+        'New password must be different from old password',
+      );
+    }
+
     const hashed = await hashPassword(newPassword);
 
     await this.prisma.$transaction([
@@ -439,9 +450,10 @@ export class AuthService {
   async forgotPassword(email: string): Promise<{ message: string }> {
     const genericMessage =
       'If this email exists in our system, a password reset link has been sent.';
+    const normalizedEmail = this.normalizeEmail(email);
 
     const user = await this.prisma.user.findUnique({
-      where: { email },
+      where: { email: normalizedEmail },
       select: { id: true, email: true },
     });
 
@@ -485,6 +497,7 @@ export class AuthService {
           select: {
             id: true,
             email: true,
+            password: true,
           },
         },
       },
@@ -492,6 +505,16 @@ export class AuthService {
 
     if (!tokenRecord || tokenRecord.usedAt || tokenRecord.expiresAt.getTime() <= Date.now()) {
       throw new ForbiddenException('Reset token is invalid or expired');
+    }
+
+    const isSamePassword = await comparePassword(
+      newPassword,
+      tokenRecord.user.password,
+    );
+    if (isSamePassword) {
+      throw new BadRequestException(
+        'New password must be different from current password',
+      );
     }
 
     const hashedPassword = await hashPassword(newPassword);
@@ -630,6 +653,10 @@ export class AuthService {
 
   private hashToken(rawToken: string): string {
     return createHash('sha256').update(rawToken).digest('hex');
+  }
+
+  private normalizeEmail(email: string): string {
+    return email.trim().toLowerCase();
   }
 
   private getResetTokenTtlMinutes(): number {

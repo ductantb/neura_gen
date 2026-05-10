@@ -5,7 +5,8 @@ import { AuthService } from './auth.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { MailService } from 'src/infra/mail/mail.service';
 import { REDIS_CLIENT } from 'src/common/constants';
-import { UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, UnauthorizedException } from '@nestjs/common';
+import { hashPassword } from 'src/utils/hash';
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -20,6 +21,10 @@ describe('AuthService', () => {
   let redisClient: {
     set: jest.Mock;
     eval: jest.Mock;
+  };
+  let prismaService: {
+    user: { findUnique: jest.Mock };
+    passwordResetToken: { findUnique: jest.Mock };
   };
 
   beforeEach(async () => {
@@ -53,12 +58,21 @@ describe('AuthService', () => {
       eval: jest.fn(),
     };
 
+    prismaService = {
+      user: {
+        findUnique: jest.fn(),
+      },
+      passwordResetToken: {
+        findUnique: jest.fn(),
+      },
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
         {
           provide: PrismaService,
-          useValue: {},
+          useValue: prismaService,
         },
         {
           provide: JwtService,
@@ -142,5 +156,47 @@ describe('AuthService', () => {
     await expect(
       service.loginWithGoogleIdToken('not-a-valid-google-token'),
     ).rejects.toThrow(UnauthorizedException);
+  });
+
+  it('normalizes email when handling forgot password', async () => {
+    prismaService.user.findUnique.mockResolvedValue(null);
+
+    await service.forgotPassword('  USER@Example.COM ');
+
+    expect(prismaService.user.findUnique).toHaveBeenCalledWith({
+      where: { email: 'user@example.com' },
+      select: { id: true, email: true },
+    });
+  });
+
+  it('rejects change password when new password matches old password', async () => {
+    const currentHash = await hashPassword('samepassword123');
+    prismaService.user.findUnique.mockResolvedValue({
+      email: 'user@example.com',
+      password: currentHash,
+    });
+
+    await expect(
+      service.changePassword('user-id', 'samepassword123', 'samepassword123'),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('rejects reset password when new password matches current password', async () => {
+    const currentHash = await hashPassword('samepassword123');
+    prismaService.passwordResetToken.findUnique.mockResolvedValue({
+      id: 'token-id',
+      userId: 'user-id',
+      usedAt: null,
+      expiresAt: new Date(Date.now() + 60_000),
+      user: {
+        id: 'user-id',
+        email: 'user@example.com',
+        password: currentHash,
+      },
+    });
+
+    await expect(
+      service.resetPassword('raw-reset-token', 'samepassword123'),
+    ).rejects.toThrow(BadRequestException);
   });
 });
