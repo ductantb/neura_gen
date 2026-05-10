@@ -19,39 +19,32 @@ export type ProPlanPackage = {
 
 export const CREDIT_TOPUP_PACKAGES: ReadonlyArray<CreditTopupPackage> = [
   {
-    code: 'TOPUP_STARTER_4_99',
+    code: 'TOPUP_STARTER_0_99',
     label: 'Starter',
-    amountUsd: '4.99',
-    amountVnd: 125000,
-    credits: 300,
+    amountUsd: '0.99',
+    amountVnd: 24750,
+    credits: 50,
   },
   {
-    code: 'TOPUP_POPULAR_9_99',
+    code: 'TOPUP_POPULAR_4_99',
     label: 'Popular',
-    amountUsd: '9.99',
-    amountVnd: 250000,
-    credits: 700,
+    amountUsd: '4.99',
+    amountVnd: 124750,
+    credits: 250,
   },
   {
-    code: 'TOPUP_PRO_14_99',
+    code: 'TOPUP_PRO_9_99',
     label: 'Pro',
-    amountUsd: '14.99',
-    amountVnd: 375000,
-    credits: 1000,
+    amountUsd: '9.99',
+    amountVnd: 249750,
+    credits: 500,
   },
   {
     code: 'TOPUP_MAX_19_99',
     label: 'Max',
     amountUsd: '19.99',
-    amountVnd: 500000,
-    credits: 1500,
-  },
-  {
-    code: 'TOPUP_STUDIO_49_99',
-    label: 'Studio',
-    amountUsd: '49.99',
-    amountVnd: 1250000,
-    credits: 4200,
+    amountVnd: 499750,
+    credits: 1000,
   },
 ];
 

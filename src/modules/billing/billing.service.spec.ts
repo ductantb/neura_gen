@@ -48,13 +48,13 @@ describe('BillingService', () => {
       provider: PaymentProvider.BANK_TRANSFER,
       type: PaymentOrderType.CREDIT_TOPUP,
       status: PaymentOrderStatus.PENDING,
-      packageCode: 'TOPUP_POPULAR_9_99',
-      amountUsd: '9.99',
-      creditAmount: 700,
+      packageCode: 'TOPUP_POPULAR_4_99',
+      amountUsd: '4.99',
+      creditAmount: 250,
       proDurationDays: 0,
       createdAt: new Date('2026-04-10T10:00:00.000Z'),
       expiresAt: new Date('2026-04-10T10:30:00.000Z'),
-      metadata: { amountVnd: 250000 },
+      metadata: { amountVnd: 124750 },
     });
 
     const result = await service.createOrder('user-1', {
@@ -66,9 +66,9 @@ describe('BillingService', () => {
       expect.objectContaining({
         data: expect.objectContaining({
           userId: 'user-1',
-          packageCode: 'TOPUP_POPULAR_9_99',
-          amountUsd: '9.99',
-          creditAmount: 700,
+          packageCode: 'TOPUP_POPULAR_4_99',
+          amountUsd: '4.99',
+          creditAmount: 250,
         }),
       }),
     );
@@ -183,22 +183,22 @@ describe('BillingService', () => {
       provider: PaymentProvider.PAYOS,
       type: PaymentOrderType.CREDIT_TOPUP,
       status: PaymentOrderStatus.PENDING,
-      packageCode: 'TOPUP_POPULAR_9_99',
-      amountUsd: '9.99',
-      creditAmount: 700,
+      packageCode: 'TOPUP_POPULAR_4_99',
+      amountUsd: '4.99',
+      creditAmount: 250,
       proDurationDays: 0,
       createdAt: new Date('2026-04-18T10:00:00.000Z'),
       expiresAt: new Date('2026-04-18T10:30:00.000Z'),
-      metadata: { amountVnd: 250000 },
+      metadata: { amountVnd: 124750 },
     });
     prisma.paymentOrder.update.mockResolvedValue({
       id: 'order-1',
       provider: PaymentProvider.PAYOS,
       type: PaymentOrderType.CREDIT_TOPUP,
       status: PaymentOrderStatus.PENDING,
-      packageCode: 'TOPUP_POPULAR_9_99',
-      amountUsd: '9.99',
-      creditAmount: 700,
+      packageCode: 'TOPUP_POPULAR_4_99',
+      amountUsd: '4.99',
+      creditAmount: 250,
       proDurationDays: 0,
       createdAt: new Date('2026-04-18T10:00:00.000Z'),
       expiresAt: new Date('2026-04-18T10:30:00.000Z'),
@@ -212,7 +212,7 @@ describe('BillingService', () => {
           bin: '970418',
           accountNumber: '123456789',
           accountName: 'NEURA GEN',
-          amount: 250000,
+          amount: 124750,
           description: 'NEURA1234567890123',
           orderCode: 123456789012345,
           currency: 'VND',
@@ -227,7 +227,7 @@ describe('BillingService', () => {
     const result = await service.createOrder('user-1', {
       provider: PaymentProvider.PAYOS,
       type: PaymentOrderType.CREDIT_TOPUP,
-      packageCode: 'TOPUP_POPULAR_9_99',
+      packageCode: 'TOPUP_POPULAR_4_99',
     });
 
     expect(result).toEqual(
@@ -260,7 +260,7 @@ describe('BillingService', () => {
       status: PaymentOrderStatus.PENDING,
       provider: PaymentProvider.MOMO,
       metadata: {
-        amountVnd: 250000,
+        amountVnd: 124750,
       },
     });
     prisma.paymentOrder.update.mockResolvedValue({});
@@ -271,7 +271,7 @@ describe('BillingService', () => {
 
     const payload = {
       orderType: 'momo_wallet',
-      amount: 250000,
+      amount: 124750,
       partnerCode: 'MOMO_TEST',
       orderId: 'order-1',
       extraData: '',
@@ -330,7 +330,7 @@ describe('BillingService', () => {
       status: PaymentOrderStatus.PENDING,
       provider: PaymentProvider.PAYOS,
       metadata: {
-        amountVnd: 250000,
+        amountVnd: 124750,
         payosOrderCode: 123456789012345,
       },
     });
@@ -342,7 +342,7 @@ describe('BillingService', () => {
 
     const webhookData = {
       orderCode: 123456789012345,
-      amount: 250000,
+      amount: 124750,
       description: 'NEURA1234567890123',
       accountNumber: '123456789',
       reference: 'FT123456',

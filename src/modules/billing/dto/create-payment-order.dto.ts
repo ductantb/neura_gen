@@ -20,7 +20,7 @@ export class CreatePaymentOrderDto {
   @ApiPropertyOptional({
     description:
       'Mã package billing. Nếu bỏ trống sẽ dùng mặc định theo loại đơn.',
-    example: 'TOPUP_POPULAR_9_99',
+    example: 'TOPUP_POPULAR_4_99',
   })
   @IsOptional()
   @IsString()
