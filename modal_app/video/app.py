@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import os
+import subprocess
 import tempfile
 from io import BytesIO
 
@@ -24,13 +25,15 @@ LTX_NUM_FRAMES = 121
 LTX_NUM_INFERENCE_STEPS = 40
 LTX_GUIDANCE_SCALE = 5.5
 LTX_VIDEO_FPS = 24
-# Tuned for L40S: keep 720p-ish quality while avoiding the long runtimes
-# and timeout risk of the heavier 121-frame / 50-step configuration.
+# Tuned for L40S: prioritize stable quality while keeping runtime practical.
 WAN_MAX_AREA = 480 * 832
-WAN_NUM_FRAMES_5S = 81
-WAN_NUM_FRAMES_8S = 121
-WAN_NUM_INFERENCE_STEPS = 32
-WAN_GUIDANCE_SCALE = 4.5
+WAN_NUM_FRAMES_5S = 121
+WAN_NUM_FRAMES_8S = 193
+WAN_NUM_INFERENCE_STEPS = 40
+WAN_GUIDANCE_SCALE = 5.0
+WAN_I2V_GUIDANCE_DELTA = -0.2
+WAN_T2V_GUIDANCE_DELTA = 0.2
+WAN_I2V_STRENGTH = 0.75
 WAN_VIDEO_FPS = 24
 HUNYUAN_LANDSCAPE_WIDTH = 960
 HUNYUAN_LANDSCAPE_HEIGHT = 544
@@ -58,18 +61,23 @@ WAN_QUALITY_PROMPT_SUFFIX = (
     "Preserve the main subject identity, facial structure, clothing, and scene layout "
     "from the input image while creating premium cinematic image-to-video motion. "
     "Add rich natural movement, believable body mechanics, realistic physics, elegant "
-    "camera motion, clean fine detail, stable anatomy, and strong temporal consistency."
+    "camera motion, clean fine detail, stable anatomy, and strong temporal consistency. "
+    "Keep the same person identity in every frame with no face drift, no age shift, no "
+    "gender shift, and no extra person replacing the subject."
 )
 WAN_T2V_PROMPT_SUFFIX = (
     "Generate a premium cinematic text-to-video shot with rich natural motion, "
     "believable body mechanics, realistic physics, stable anatomy, clean details, "
-    "and strong temporal consistency from the first frame to the last."
+    "and strong temporal consistency from the first frame to the last. "
+    "Strictly follow the prompt's subject, action, composition, camera movement, and lighting."
 )
 WAN_NEGATIVE_PROMPT = (
     "low quality, blurry, static, frozen frame, weak motion, temporal flicker, "
     "jitter, warped anatomy, broken hands, distorted face, identity drift, subject "
     "duplication, morphing, melting details, unrealistic camera motion, background "
-    "warping, overexposed highlights, watermark, text, subtitles, compression artifacts"
+    "warping, overexposed highlights, watermark, text, subtitles, compression artifacts, "
+    "asymmetrical eyes, cross-eye artifacts, warped jawline, face stretching, face melting, "
+    "fused fingers, extra fingers, deformed ears, plastic skin texture"
 )
 HUNYUAN_QUALITY_PROMPT_SUFFIX = (
     "Keep the first-frame identity and the original composition highly consistent. "
@@ -242,7 +250,20 @@ def _build_negative_prompt(negative_prompt: str | None) -> str:
 
 def _build_wan_prompt(prompt: str, has_input_image: bool) -> str:
     suffix = WAN_QUALITY_PROMPT_SUFFIX if has_input_image else WAN_T2V_PROMPT_SUFFIX
-    return f"{prompt.strip()}. {suffix} The final clip should feel like a premium 24fps cinematic shot."
+    prompt_core = prompt.strip()
+
+    if has_input_image:
+        return (
+            f"{prompt_core}. {suffix} "
+            "Preserve first-frame identity and composition while adding natural motion only. "
+            "The final clip should feel like a premium 24fps cinematic shot."
+        )
+
+    return (
+        f"{prompt_core}. {suffix} "
+        "Keep character proportions and facial features consistent across all frames. "
+        "The final clip should feel like a premium 24fps cinematic shot."
+    )
 
 
 def _build_wan_negative_prompt(negative_prompt: str | None) -> str:
@@ -273,12 +294,15 @@ def _resolve_wan_profile(preset_id: str | None):
             "max_area": WAN_MAX_AREA,
             "num_frames": WAN_NUM_FRAMES_8S,
             "num_inference_steps": WAN_NUM_INFERENCE_STEPS,
-            "guidance_scale": WAN_GUIDANCE_SCALE,
+            "guidance_scale_i2v": WAN_GUIDANCE_SCALE + WAN_I2V_GUIDANCE_DELTA,
+            "guidance_scale_t2v": WAN_GUIDANCE_SCALE + WAN_T2V_GUIDANCE_DELTA,
+            "i2v_strength": WAN_I2V_STRENGTH,
             "fps": WAN_VIDEO_FPS,
+            "target_duration_seconds": 8.0,
             "i2v_message": "Wan 2.2 TI2V standard (8s) generated successfully",
             "t2v_message": "Wan 2.2 T2V standard (8s) generated successfully",
             "preset_id": WAN_STANDARD_8S_PRESET_ID,
-            "debug_version": "modal_wan22_ti2v_standard_v3_8s",
+            "debug_version": "modal_wan22_ti2v_standard_v4_8s",
         }
 
     if resolved_preset_id == WAN_STANDARD_PRESET_ID:
@@ -286,12 +310,15 @@ def _resolve_wan_profile(preset_id: str | None):
             "max_area": WAN_MAX_AREA,
             "num_frames": WAN_NUM_FRAMES_5S,
             "num_inference_steps": WAN_NUM_INFERENCE_STEPS,
-            "guidance_scale": WAN_GUIDANCE_SCALE,
+            "guidance_scale_i2v": WAN_GUIDANCE_SCALE + WAN_I2V_GUIDANCE_DELTA,
+            "guidance_scale_t2v": WAN_GUIDANCE_SCALE + WAN_T2V_GUIDANCE_DELTA,
+            "i2v_strength": WAN_I2V_STRENGTH,
             "fps": WAN_VIDEO_FPS,
+            "target_duration_seconds": 5.0,
             "i2v_message": "Wan 2.2 TI2V standard generated successfully",
             "t2v_message": "Wan 2.2 T2V standard generated successfully",
             "preset_id": WAN_STANDARD_PRESET_ID,
-            "debug_version": "modal_wan22_ti2v_standard_v3_5s",
+            "debug_version": "modal_wan22_ti2v_standard_v4_5s",
         }
 
     raise ValueError(f"Unsupported presetId for Wan TI2V deployment: {resolved_preset_id}")
@@ -451,6 +478,43 @@ def _cleanup_cuda_memory():
     except Exception:
         # Best-effort cleanup only; don't block inference if torch cleanup fails.
         pass
+
+
+def _force_video_duration_seconds(
+    input_path: str,
+    target_duration_seconds: float,
+) -> None:
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+        adjusted_path = tmp.name
+
+    try:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                input_path,
+                "-t",
+                f"{target_duration_seconds:.3f}",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "medium",
+                "-crf",
+                "18",
+                "-pix_fmt",
+                "yuv420p",
+                "-an",
+                adjusted_path,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        os.replace(adjusted_path, input_path)
+    finally:
+        if os.path.exists(adjusted_path):
+            os.remove(adjusted_path)
 
 
 def _load_hunyuan_pipeline():
@@ -793,11 +857,16 @@ def _generate_wan_video_response(
         "width": width,
         "num_frames": profile["num_frames"],
         "num_inference_steps": profile["num_inference_steps"],
-        "guidance_scale": profile["guidance_scale"],
+        "guidance_scale": (
+            profile["guidance_scale_i2v"]
+            if has_input_image
+            else profile["guidance_scale_t2v"]
+        ),
         "generator": generator,
     }
     if has_input_image:
         generation_kwargs["image"] = image
+        generation_kwargs["strength"] = profile["i2v_strength"]
 
     _cleanup_cuda_memory()
     result = pipe(
@@ -810,6 +879,7 @@ def _generate_wan_video_response(
 
     try:
         export_to_video(frames, output_path, fps=profile["fps"])
+        _force_video_duration_seconds(output_path, profile["target_duration_seconds"])
         with open(output_path, "rb") as video_file:
             encoded_video = base64.b64encode(video_file.read()).decode("utf-8")
     finally:
@@ -835,8 +905,14 @@ def _generate_wan_video_response(
             "height": height,
             "num_frames": profile["num_frames"],
             "num_inference_steps": profile["num_inference_steps"],
-            "guidance_scale": profile["guidance_scale"],
+            "guidance_scale": (
+                profile["guidance_scale_i2v"]
+                if has_input_image
+                else profile["guidance_scale_t2v"]
+            ),
+            "i2v_strength": profile["i2v_strength"] if has_input_image else None,
             "fps": profile["fps"],
+            "target_duration_seconds": profile["target_duration_seconds"],
             "input_mode": "image" if has_input_image else "text",
         },
         "debug_version": profile["debug_version"],

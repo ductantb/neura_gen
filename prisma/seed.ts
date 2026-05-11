@@ -7,24 +7,42 @@ import {
   AssetRole,
   StorageProvider,
 } from '@prisma/client';
+import {
+  HeadObjectCommand,
+  PutObjectCommand,
+  S3Client,
+  S3ServiceException,
+} from '@aws-sdk/client-s3';
 import * as bcrypt from 'bcrypt';
-import { basename } from 'path';
+import { basename, extname } from 'path';
 import * as fs from 'fs';
 
 const prisma = new PrismaClient();
+const s3Client = new S3Client({
+  region: process.env.AWS_REGION || 'us-east-1',
+  credentials:
+    process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY
+      ? {
+          accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+          secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+        }
+      : undefined,
+});
+const DEFAULT_THUMBNAIL_JPEG_BASE64 =
+  '/9j/4AAQSkZJRgABAQAAAQABAAD/2wCEAAkGBxAQEBUQEBQWFhUVFRUVFRUVFRUVFRUVFhUXFhUVFRUYHSggGBolGxUVITEhJSkrLi4uFx8zODMsNygtLisBCgoKDg0OGhAQGi0fHyUtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLf/AABEIAAEAAQMBIgACEQEDEQH/xAAXAAADAQAAAAAAAAAAAAAAAAAAAQID/8QAFhABAQEAAAAAAAAAAAAAAAAAAQAC/9oADAMBAAIQAxAAAAGvAH//xAAVEAEBAAAAAAAAAAAAAAAAAAABEP/aAAgBAQABBQKf/8QAFhEBAQEAAAAAAAAAAAAAAAAAABEB/9oACAEDAQE/Aaf/xAAVEQEBAAAAAAAAAAAAAAAAAAAAEf/aAAgBAgEBPwGn/8QAFBABAAAAAAAAAAAAAAAAAAAAEP/aAAgBAQAGPwJf/8QAFBABAAAAAAAAAAAAAAAAAAAAEP/aAAgBAQABPyFf/9k=';
 
 // Seed keys để chạy nhiều lần không trùng logic
 const SEED = {
-  defaultPassword: '12345678',
-
   jobSeedKey: 'seed:v2:job:image_to_video:cyberpunk_city',
   inputAssetSeedKey: 'seed:v2:asset:input:image',
   outputAssetSeedKey: 'seed:v2:asset:output:video',
+  outputThumbnailSeedKey: 'seed:v2:asset:thumbnail:video',
 };
 
 const SEED_USERS = [
   {
-    email: 'free.user@neuragen.local',
+    email: 'free.user@gmail.com',
+    password: 'FreeUser@123',
     username: 'free_creator',
     role: UserRole.FREE,
     bio: 'Free plan user for baseline explore/feed tests.',
@@ -32,7 +50,8 @@ const SEED_USERS = [
     creditBalance: 120,
   },
   {
-    email: 'pro.user@neuragen.local',
+    email: 'pro.user@gmail.com',
+    password: 'ProUser@123',
     username: 'pro_editor',
     role: UserRole.PRO,
     bio: 'Pro plan creator with higher activity in cinematic topics.',
@@ -41,7 +60,8 @@ const SEED_USERS = [
     proDays: 30,
   },
   {
-    email: 'admin.user@neuragen.local',
+    email: 'admin.user@gmail.com',
+    password: 'AdminUser@123',
     username: 'admin_ops',
     role: UserRole.ADMIN,
     bio: 'Administrator account used for moderation and ops checks.',
@@ -277,6 +297,179 @@ function sanitizeTopic(input?: string) {
   return topic || 'general';
 }
 
+function buildThumbnailObjectKey(videoObjectKey: string) {
+  const extension = extname(videoObjectKey);
+  if (!extension) return `${videoObjectKey}-thumbnail.jpg`;
+  return `${videoObjectKey.slice(0, -extension.length)}-thumbnail.jpg`;
+}
+
+async function ensureS3ThumbnailObject(bucket: string, objectKey: string) {
+  try {
+    await s3Client.send(
+      new HeadObjectCommand({
+        Bucket: bucket,
+        Key: objectKey,
+      }),
+    );
+    return;
+  } catch (error) {
+    const s3Error = error as S3ServiceException;
+    const status = s3Error?.$metadata?.httpStatusCode;
+    if (status && status !== 404) {
+      console.warn(
+        `⚠️ Cannot verify thumbnail object ${bucket}/${objectKey} (status: ${status})`,
+      );
+      return;
+    }
+  }
+
+  await s3Client.send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: objectKey,
+      Body: Buffer.from(DEFAULT_THUMBNAIL_JPEG_BASE64, 'base64'),
+      ContentType: 'image/jpeg',
+      CacheControl: 'public, max-age=31536000, immutable',
+    }),
+  );
+  console.log(`✅ Uploaded placeholder thumbnail: s3://${bucket}/${objectKey}`);
+}
+
+async function ensureSeedJobForVideo(options: {
+  userId: string;
+  seedKey: string;
+  prompt: string;
+  createdAt: Date;
+}) {
+  const existing = await prisma.generateJob.findFirst({
+    where: {
+      userId: options.userId,
+      extraConfig: {
+        path: ['seedKey'],
+        equals: options.seedKey,
+      },
+    },
+  });
+
+  if (existing) {
+    return existing;
+  }
+
+  return prisma.generateJob.create({
+    data: {
+      userId: options.userId,
+      type: JobType.IMAGE_TO_VIDEO,
+      prompt: options.prompt,
+      modelName: 'seed-model',
+      status: JobStatus.COMPLETED,
+      progress: 100,
+      provider: 'seed',
+      startedAt: options.createdAt,
+      completedAt: options.createdAt,
+      createdAt: options.createdAt,
+      extraConfig: {
+        seedKey: options.seedKey,
+        source: 'seed',
+        kind: 'explore-seed-job',
+      },
+    },
+  });
+}
+
+async function ensureThumbnailForVideoAssetVersion(options: {
+  userId: string;
+  seedKey: string;
+  prompt: string;
+  createdAt: Date;
+  videoAssetId: string;
+  videoVersionBucket: string;
+  videoVersionObjectKey: string;
+}) {
+  const job = await ensureSeedJobForVideo({
+    userId: options.userId,
+    seedKey: `${options.seedKey}:job`,
+    prompt: options.prompt,
+    createdAt: options.createdAt,
+  });
+
+  await prisma.asset.update({
+    where: { id: options.videoAssetId },
+    data: { jobId: job.id },
+  });
+
+  let thumbnailAsset = await prisma.asset.findFirst({
+    where: {
+      userId: options.userId,
+      jobId: job.id,
+      type: AssetType.THUMBNAIL,
+      role: AssetRole.THUMBNAIL,
+    },
+  });
+
+  if (!thumbnailAsset) {
+    thumbnailAsset = await prisma.asset.create({
+      data: {
+        userId: options.userId,
+        jobId: job.id,
+        type: AssetType.THUMBNAIL,
+        role: AssetRole.THUMBNAIL,
+        mimeType: 'image/jpeg',
+        originalName: `${basename(options.videoVersionObjectKey, extname(options.videoVersionObjectKey))}-thumbnail.jpg`,
+      },
+    });
+  }
+
+  const thumbnailObjectKey = buildThumbnailObjectKey(options.videoVersionObjectKey);
+  const thumbnailFileUrl = buildS3PublicUrl(
+    options.videoVersionBucket,
+    thumbnailObjectKey,
+  );
+  await ensureS3ThumbnailObject(options.videoVersionBucket, thumbnailObjectKey);
+
+  await prisma.assetVersion.upsert({
+    where: {
+      assetId_version: {
+        assetId: thumbnailAsset.id,
+        version: 1,
+      },
+    },
+    update: {
+      storageProvider: StorageProvider.S3,
+      bucket: options.videoVersionBucket,
+      objectKey: thumbnailObjectKey,
+      fileUrl: thumbnailFileUrl,
+      originalName: `${basename(options.videoVersionObjectKey, extname(options.videoVersionObjectKey))}-thumbnail.jpg`,
+      mimeType: 'image/jpeg',
+      width: 1024,
+      height: 576,
+      quality: 'THUMBNAIL',
+      metadata: {
+        seedKey: `${options.seedKey}:thumbnail`,
+        source: 'seed',
+        kind: 'explore-thumbnail',
+      },
+    },
+    create: {
+      assetId: thumbnailAsset.id,
+      version: 1,
+      storageProvider: StorageProvider.S3,
+      bucket: options.videoVersionBucket,
+      objectKey: thumbnailObjectKey,
+      fileUrl: thumbnailFileUrl,
+      originalName: `${basename(options.videoVersionObjectKey, extname(options.videoVersionObjectKey))}-thumbnail.jpg`,
+      mimeType: 'image/jpeg',
+      width: 1024,
+      height: 576,
+      quality: 'THUMBNAIL',
+      metadata: {
+        seedKey: `${options.seedKey}:thumbnail`,
+        source: 'seed',
+        kind: 'explore-thumbnail',
+      },
+    },
+  });
+}
+
 function parseExploreManifestFromEnv() {
   const inline = process.env.SEED_EXPLORE_MANIFEST_JSON?.trim();
   const path = process.env.SEED_EXPLORE_MANIFEST_PATH?.trim();
@@ -296,14 +489,14 @@ function parseExploreManifestFromEnv() {
 async function main() {
   console.log('🌱 Seeding database (idempotent)...');
 
-  const passwordHash = await bcrypt.hash(SEED.defaultPassword, 10);
-
   // 1) Users theo role + dữ liệu hồ sơ cơ bản
   const seededUsers = await Promise.all(
-    SEED_USERS.map((seedUser) =>
-      prisma.user.upsert({
+    SEED_USERS.map(async (seedUser) => {
+      const passwordHash = await bcrypt.hash(seedUser.password, 10);
+      return prisma.user.upsert({
         where: { email: seedUser.email },
         update: {
+          password: passwordHash,
           username: seedUser.username,
           role: seedUser.role,
           bio: seedUser.bio,
@@ -331,8 +524,8 @@ async function main() {
               }
             : {}),
         },
-      }),
-    ),
+      });
+    }),
   );
 
   for (let i = 0; i < seededUsers.length; i++) {
@@ -675,6 +868,78 @@ async function main() {
     );
   }
 
+  let outputThumbnailAsset = await prisma.asset.findFirst({
+    where: {
+      userId: freeUser.id,
+      jobId: job.id,
+      type: AssetType.THUMBNAIL,
+      role: AssetRole.THUMBNAIL,
+    },
+  });
+
+  if (!outputThumbnailAsset) {
+    outputThumbnailAsset = await prisma.asset.create({
+      data: {
+        userId: freeUser.id,
+        jobId: job.id,
+        type: AssetType.THUMBNAIL,
+        role: AssetRole.THUMBNAIL,
+        mimeType: 'image/jpeg',
+        originalName: 'cyberpunk-output-thumbnail.jpg',
+      },
+    });
+    console.log('✅ Created output thumbnail asset:', outputThumbnailAsset.id);
+  } else {
+    console.log('✅ Reused existing output thumbnail asset:', outputThumbnailAsset.id);
+  }
+
+  await prisma.assetVersion.upsert({
+    where: {
+      assetId_version: {
+        assetId: outputThumbnailAsset.id,
+        version: 1,
+      },
+    },
+    update: {
+      storageProvider: StorageProvider.S3,
+      bucket: outputBucket,
+      objectKey: buildThumbnailObjectKey(outputObjectKey),
+      fileUrl: buildS3PublicUrl(outputBucket, buildThumbnailObjectKey(outputObjectKey)),
+      originalName: 'cyberpunk-output-thumbnail.jpg',
+      mimeType: 'image/jpeg',
+      width: 1024,
+      height: 576,
+      quality: 'THUMBNAIL',
+      metadata: {
+        seedKey: SEED.outputThumbnailSeedKey,
+        source: 'seed',
+        kind: 'output-thumbnail',
+      },
+    },
+    create: {
+      assetId: outputThumbnailAsset.id,
+      version: 1,
+      storageProvider: StorageProvider.S3,
+      bucket: outputBucket,
+      objectKey: buildThumbnailObjectKey(outputObjectKey),
+      fileUrl: buildS3PublicUrl(outputBucket, buildThumbnailObjectKey(outputObjectKey)),
+      originalName: 'cyberpunk-output-thumbnail.jpg',
+      mimeType: 'image/jpeg',
+      width: 1024,
+      height: 576,
+      quality: 'THUMBNAIL',
+      metadata: {
+        seedKey: SEED.outputThumbnailSeedKey,
+        source: 'seed',
+        kind: 'output-thumbnail',
+      },
+    },
+  });
+  await ensureS3ThumbnailObject(
+    outputBucket,
+    buildThumbnailObjectKey(outputObjectKey),
+  );
+
   // 8) GalleryItem cho output video
   const existingGallery = await prisma.galleryItem.findFirst({
     where: {
@@ -739,10 +1004,19 @@ async function main() {
       },
     });
 
-    if (!version) {
+      if (!version) {
+      const createdAt = new Date(Date.now() - (item.ageHours ?? 4) * 60 * 60 * 1000);
+      const seedJob = await ensureSeedJobForVideo({
+        userId: freeUser.id,
+        seedKey: `${seedKey}:job`,
+        prompt: item.caption || item.title || `Seed video ${i + 1}`,
+        createdAt,
+      });
+
       const asset = await prisma.asset.create({
         data: {
           userId: freeUser.id,
+          jobId: seedJob.id,
           type: AssetType.VIDEO,
           role: AssetRole.OUTPUT,
           mimeType: item.mimeType || 'video/mp4',
@@ -774,6 +1048,16 @@ async function main() {
       });
       console.log('✅ Added explore assetVersion from manifest:', seedKey);
     }
+
+    await ensureThumbnailForVideoAssetVersion({
+      userId: freeUser.id,
+      seedKey,
+      prompt: item.caption || item.title || `Seed video ${i + 1}`,
+      createdAt: new Date(Date.now() - (item.ageHours ?? 4) * 60 * 60 * 1000),
+      videoAssetId: version.assetId,
+      videoVersionBucket: version.bucket,
+      videoVersionObjectKey: version.objectKey,
+    });
 
     seededExploreAssetVersions.push(version);
 
@@ -848,9 +1132,17 @@ async function main() {
     });
 
     if (!version) {
+      const seedJob = await ensureSeedJobForVideo({
+        userId: freeUser.id,
+        seedKey: `${seedKey}:job`,
+        prompt: `Seed env video ${i + 1}`,
+        createdAt: new Date(),
+      });
+
       const asset = await prisma.asset.create({
         data: {
           userId: freeUser.id,
+          jobId: seedJob.id,
           type: AssetType.VIDEO,
           role: AssetRole.OUTPUT,
           mimeType: 'video/mp4',
@@ -883,6 +1175,16 @@ async function main() {
       console.log('✅ Added explore assetVersion from S3 key:', objectKey);
     }
 
+    await ensureThumbnailForVideoAssetVersion({
+      userId: freeUser.id,
+      seedKey,
+      prompt: `Seed env video ${i + 1}`,
+      createdAt: new Date(),
+      videoAssetId: version.assetId,
+      videoVersionBucket: version.bucket,
+      videoVersionObjectKey: version.objectKey,
+    });
+
     seededExploreAssetVersions.push(version);
   }
 
@@ -904,10 +1206,17 @@ async function main() {
       const resolvedLocalUrl = localPublicBaseUrl
         ? `${localPublicBaseUrl.replace(/\/$/, '')}/${basename(localPath)}`
         : null;
+      const seedJob = await ensureSeedJobForVideo({
+        userId: freeUser.id,
+        seedKey: `${seedKey}:job`,
+        prompt: `Seed local video ${i + 1}`,
+        createdAt: new Date(),
+      });
 
       const asset = await prisma.asset.create({
         data: {
           userId: freeUser.id,
+          jobId: seedJob.id,
           type: AssetType.VIDEO,
           role: AssetRole.OUTPUT,
           mimeType: 'video/mp4',
@@ -939,6 +1248,16 @@ async function main() {
       });
       console.log('✅ Added explore assetVersion from local path:', localPath);
     }
+
+    await ensureThumbnailForVideoAssetVersion({
+      userId: freeUser.id,
+      seedKey,
+      prompt: `Seed local video ${i + 1}`,
+      createdAt: new Date(),
+      videoAssetId: version.assetId,
+      videoVersionBucket: version.bucket,
+      videoVersionObjectKey: version.objectKey,
+    });
 
     seededExploreAssetVersions.push(version);
   }

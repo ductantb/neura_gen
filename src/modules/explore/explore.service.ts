@@ -979,10 +979,21 @@ export class ExploreService {
             item.assetVersion.fileUrl,
           )
         : null);
+    const metadataSource = (item.assetVersion.metadata as { source?: string } | null)
+      ?.source;
+    const shouldExposeSeedVideoUrl = metadataSource === 'seed';
+    const videoUrl =
+      shouldExposeSeedVideoUrl && item.assetVersion.asset.type === 'VIDEO'
+        ? await this.resolveAssetUrl(
+            item.assetVersion.objectKey,
+            item.assetVersion.fileUrl,
+          )
+        : null;
 
     return {
       ...item,
       thumbnailUrl,
+      videoUrl,
     };
   }
 
