@@ -66,6 +66,21 @@ export class MailService {
       host,
       port,
       secure,
+      connectionTimeout: Number(
+        this.normalizeOptionalString(
+          this.configService.get<string>('MAIL_CONNECTION_TIMEOUT_MS'),
+        ) ?? '10000',
+      ),
+      greetingTimeout: Number(
+        this.normalizeOptionalString(
+          this.configService.get<string>('MAIL_GREETING_TIMEOUT_MS'),
+        ) ?? '10000',
+      ),
+      socketTimeout: Number(
+        this.normalizeOptionalString(
+          this.configService.get<string>('MAIL_SOCKET_TIMEOUT_MS'),
+        ) ?? '15000',
+      ),
       auth: {
         user,
         pass,

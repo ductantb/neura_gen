@@ -86,7 +86,9 @@ export class AuthService {
       },
     });
 
-    await this.mailService.sendWelcomeEmail(user.email);
+    this.dispatchEmail('welcome_email', user.email, () =>
+      this.mailService.sendWelcomeEmail(user.email),
+    );
     return this.issueTokenPair(user);
   }
 
@@ -162,7 +164,9 @@ export class AuthService {
       },
     });
 
-    await this.mailService.sendWelcomeEmail(newUser.email);
+    this.dispatchEmail('welcome_email', newUser.email, () =>
+      this.mailService.sendWelcomeEmail(newUser.email),
+    );
     return this.issueTokenPair(newUser);
   }
 
@@ -443,7 +447,9 @@ export class AuthService {
       }),
     ]);
 
-    await this.mailService.sendPasswordChangedEmail(user.email);
+    this.dispatchEmail('password_changed_email', user.email, () =>
+      this.mailService.sendPasswordChangedEmail(user.email),
+    );
     return { message: 'Password changed successfully' };
   }
 
@@ -479,7 +485,9 @@ export class AuthService {
       }),
     ]);
 
-    await this.mailService.sendPasswordResetEmail(user.email, resetToken);
+    this.dispatchEmail('password_reset_email', user.email, () =>
+      this.mailService.sendPasswordResetEmail(user.email, resetToken),
+    );
 
     return { message: genericMessage };
   }
@@ -539,7 +547,9 @@ export class AuthService {
       }),
     ]);
 
-    await this.mailService.sendPasswordChangedEmail(tokenRecord.user.email);
+    this.dispatchEmail('password_changed_email', tokenRecord.user.email, () =>
+      this.mailService.sendPasswordChangedEmail(tokenRecord.user.email),
+    );
     return { message: 'Password reset successfully' };
   }
 
@@ -751,5 +761,22 @@ export class AuthService {
       ...(frontendUrl ? [frontendUrl] : []),
       ...(extra ?? []),
     ];
+  }
+
+  private dispatchEmail(
+    kind: string,
+    email: string,
+    send: () => Promise<boolean>,
+  ): void {
+    void send()
+      .then((sent) => {
+        if (!sent) {
+          this.logger.warn(`${kind} was not delivered to ${email}`);
+        }
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(`${kind} failed for ${email}: ${message}`);
+      });
   }
 }
