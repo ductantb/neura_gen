@@ -36,6 +36,7 @@ type RefreshTokenPayload = {
 type GoogleOauthStatePayload = {
   type: 'google_oauth_state';
   nonce: string;
+  intent?: 'login' | 'register';
   redirectUri?: string;
   platform?: string;
 };
@@ -112,8 +113,6 @@ export class AuthService {
   }
 
   async loginWithGoogle(profile: GoogleProfilePayload): Promise<AuthResponseDto> {
-    const normalizedEmail = profile.email.trim().toLowerCase();
-
     const existingByGoogleId = await this.prisma.user.findUnique({
       where: { googleId: profile.googleId },
     });
@@ -122,22 +121,41 @@ export class AuthService {
       return this.issueTokenPair(existingByGoogleId);
     }
 
+    const normalizedEmail = this.normalizeEmail(profile.email);
     const existingByEmail = await this.prisma.user.findUnique({
       where: { email: normalizedEmail },
     });
 
     if (existingByEmail) {
-      const linkedUser = await this.prisma.user.update({
-        where: { id: existingByEmail.id },
-        data: {
-          googleId: profile.googleId,
-          ...(profile.avatarUrl && !existingByEmail.avatarUrl
-            ? { avatarUrl: profile.avatarUrl }
-            : {}),
-        },
-      });
+      throw new UnauthorizedException(
+        'Google account is not linked. Please login with password and link Google first.',
+      );
+    }
 
-      return this.issueTokenPair(linkedUser);
+    throw new UnauthorizedException(
+      'Google account is not registered. Please register first.',
+    );
+  }
+
+  async registerWithGoogle(profile: GoogleProfilePayload): Promise<AuthResponseDto> {
+    const normalizedEmail = this.normalizeEmail(profile.email);
+
+    const existingByGoogleId = await this.prisma.user.findUnique({
+      where: { googleId: profile.googleId },
+      select: { id: true },
+    });
+
+    if (existingByGoogleId) {
+      throw new ConflictException('Google account already exists');
+    }
+
+    const existingByEmail = await this.prisma.user.findUnique({
+      where: { email: normalizedEmail },
+      select: { id: true },
+    });
+
+    if (existingByEmail) {
+      throw new ConflictException('Email already exists');
     }
 
     const randomPassword = randomBytes(32).toString('hex');
@@ -174,32 +192,7 @@ export class AuthService {
     idToken: string,
     platform?: string,
   ): Promise<AuthResponseDto> {
-    let payload: TokenPayload | undefined;
-
-    try {
-      const ticket = await this.googleClient.verifyIdToken({
-        idToken,
-        audience: this.getGoogleAudiences(),
-      });
-      payload = ticket.getPayload();
-    } catch {
-      throw new UnauthorizedException('Invalid Google ID token');
-    }
-
-    if (!payload?.sub || !payload?.email) {
-      throw new UnauthorizedException('Google ID token payload is invalid');
-    }
-
-    if (payload.email_verified === false) {
-      throw new UnauthorizedException('Google email is not verified');
-    }
-
-    const profile: GoogleProfilePayload = {
-      googleId: payload.sub,
-      email: payload.email,
-      username: payload.name?.trim() || payload.email.split('@')[0],
-      avatarUrl: payload.picture,
-    };
+    const profile = await this.resolveGoogleProfileFromIdToken(idToken);
 
     if (platform) {
       this.logger.debug(`Google ID token login platform=${platform}`);
@@ -208,7 +201,89 @@ export class AuthService {
     return this.loginWithGoogle(profile);
   }
 
+  async registerWithGoogleIdToken(
+    idToken: string,
+    platform?: string,
+  ): Promise<AuthResponseDto> {
+    const profile = await this.resolveGoogleProfileFromIdToken(idToken);
+
+    if (platform) {
+      this.logger.debug(`Google ID token register platform=${platform}`);
+    }
+
+    return this.registerWithGoogle(profile);
+  }
+
+  async linkGoogleAccountByIdToken(
+    userId: string,
+    idToken: string,
+    platform?: string,
+  ): Promise<{ message: string }> {
+    const profile = await this.resolveGoogleProfileFromIdToken(idToken);
+    return this.linkGoogleAccount(userId, profile, platform);
+  }
+
+  async linkGoogleAccount(
+    userId: string,
+    profile: GoogleProfilePayload,
+    platform?: string,
+  ): Promise<{ message: string }> {
+    if (platform) {
+      this.logger.debug(`Google account link platform=${platform}`);
+    }
+
+    const currentUser = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        googleId: true,
+        avatarUrl: true,
+      },
+    });
+
+    if (!currentUser) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    if (currentUser.googleId) {
+      if (currentUser.googleId === profile.googleId) {
+        return { message: 'Google account already linked' };
+      }
+      throw new ConflictException('This account is already linked with another Google account');
+    }
+
+    const existingByGoogleId = await this.prisma.user.findUnique({
+      where: { googleId: profile.googleId },
+      select: { id: true },
+    });
+
+    if (existingByGoogleId && existingByGoogleId.id !== userId) {
+      throw new ConflictException('This Google account is already linked to another user');
+    }
+
+    const normalizedEmail = this.normalizeEmail(profile.email);
+    if (normalizedEmail !== currentUser.email) {
+      throw new BadRequestException(
+        'Google email does not match current account email',
+      );
+    }
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        googleId: profile.googleId,
+        ...(profile.avatarUrl && !currentUser.avatarUrl
+          ? { avatarUrl: profile.avatarUrl }
+          : {}),
+      },
+    });
+
+    return { message: 'Google account linked successfully' };
+  }
+
   async buildGoogleOauthState(
+    intent: 'login' | 'register',
     redirectUri?: string,
     platform?: string,
   ): Promise<string> {
@@ -216,6 +291,7 @@ export class AuthService {
     const payload: GoogleOauthStatePayload = {
       type: 'google_oauth_state',
       nonce: randomBytes(16).toString('hex'),
+      intent,
       ...(safeRedirectUri ? { redirectUri: safeRedirectUri } : {}),
       ...(platform ? { platform: platform.trim().toLowerCase() } : {}),
     };
@@ -247,8 +323,14 @@ export class AuthService {
       throw new ForbiddenException('OAuth state payload is invalid');
     }
 
+    const intent =
+      payload.intent === 'register' || payload.intent === 'login'
+        ? payload.intent
+        : 'login';
+
     return {
       ...payload,
+      intent,
       ...(payload.redirectUri
         ? { redirectUri: this.sanitizeRedirectUri(payload.redirectUri) }
         : {}),
@@ -731,6 +813,37 @@ export class AuthService {
 
   private getGoogleAuthCodeKey(code: string): string {
     return `auth:google:code:${this.hashToken(code)}`;
+  }
+
+  private async resolveGoogleProfileFromIdToken(
+    idToken: string,
+  ): Promise<GoogleProfilePayload> {
+    let payload: TokenPayload | undefined;
+
+    try {
+      const ticket = await this.googleClient.verifyIdToken({
+        idToken,
+        audience: this.getGoogleAudiences(),
+      });
+      payload = ticket.getPayload();
+    } catch {
+      throw new UnauthorizedException('Invalid Google ID token');
+    }
+
+    if (!payload?.sub || !payload?.email) {
+      throw new UnauthorizedException('Google ID token payload is invalid');
+    }
+
+    if (payload.email_verified === false) {
+      throw new UnauthorizedException('Google email is not verified');
+    }
+
+    return {
+      googleId: payload.sub,
+      email: this.normalizeEmail(payload.email),
+      username: payload.name?.trim() || payload.email.split('@')[0],
+      avatarUrl: payload.picture,
+    };
   }
 
   private sanitizeRedirectUri(value?: string): string | undefined {

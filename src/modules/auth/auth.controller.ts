@@ -99,9 +99,39 @@ export class AuthController {
       'Chuyển hướng người dùng sang Google để xác thực. Có thể truyền redirectUri/platform qua query.',
   })
   @Public()
-  @Get('google')
+  @Get('google/login')
   @UseGuards(GoogleOauthGuard)
   googleAuth(
+    @Query('redirectUri') _redirectUri?: string,
+    @Query('platform') _platform?: string,
+  ) {
+    return;
+  }
+
+  @ApiOperation({
+    summary: 'Alias cũ cho đăng nhập Google OAuth2',
+    description:
+      'Tương thích ngược với frontend cũ. Nên dùng /auth/google/login thay cho endpoint này.',
+  })
+  @Public()
+  @Get('google')
+  @UseGuards(GoogleOauthGuard)
+  googleAuthLegacy(
+    @Query('redirectUri') _redirectUri?: string,
+    @Query('platform') _platform?: string,
+  ) {
+    return;
+  }
+
+  @ApiOperation({
+    summary: 'Đăng ký nhanh bằng Google OAuth2',
+    description:
+      'Chuyển hướng người dùng sang Google để đăng ký. Nếu email đã tồn tại sẽ trả lỗi.',
+  })
+  @Public()
+  @Get('google/register')
+  @UseGuards(GoogleOauthGuard)
+  googleRegister(
     @Query('redirectUri') _redirectUri?: string,
     @Query('platform') _platform?: string,
   ) {
@@ -126,10 +156,12 @@ export class AuthController {
     @Res() res: Response,
     @Query('state') state?: string,
   ) {
-    const authResponse = await this.authService.loginWithGoogle(
-      req.user as GoogleProfilePayload,
-    );
     const oauthState = await this.authService.consumeGoogleOauthState(state);
+    const profile = req.user as GoogleProfilePayload;
+    const authResponse =
+      oauthState.intent === 'register'
+        ? await this.authService.registerWithGoogle(profile)
+        : await this.authService.loginWithGoogle(profile);
     const code = await this.authService.createGoogleAuthCode(authResponse);
 
     if (oauthState.redirectUri) {
@@ -158,6 +190,49 @@ export class AuthController {
   @Post('google/token')
   googleTokenLogin(@Body() dto: GoogleTokenLoginDto) {
     return this.authService.loginWithGoogleIdToken(dto.idToken, dto.platform);
+  }
+
+  @ApiOperation({
+    summary: 'Đăng ký Google bằng ID token (Android/Web SDK)',
+    description:
+      'Nhận idToken từ Google SDK để đăng ký. Nếu email đã tồn tại sẽ trả lỗi.',
+  })
+  @ApiBody({ type: GoogleTokenLoginDto })
+  @ApiOkResponse({
+    type: AuthResponseDto,
+  })
+  @Public()
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Post('google/token/register')
+  googleTokenRegister(@Body() dto: GoogleTokenLoginDto) {
+    return this.authService.registerWithGoogleIdToken(dto.idToken, dto.platform);
+  }
+
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Liên kết tài khoản Google cho user hiện tại',
+    description:
+      'User đã đăng nhập cung cấp Google ID token để liên kết. Không tự động link trong luồng đăng nhập.',
+  })
+  @ApiBody({ type: GoogleTokenLoginDto })
+  @ApiOkResponse({
+    schema: {
+      example: {
+        message: 'Google account linked successfully',
+      },
+    },
+  })
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Post('google/link')
+  googleLink(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: GoogleTokenLoginDto,
+  ) {
+    return this.authService.linkGoogleAccountByIdToken(
+      user.sub,
+      dto.idToken,
+      dto.platform,
+    );
   }
 
   @ApiOperation({

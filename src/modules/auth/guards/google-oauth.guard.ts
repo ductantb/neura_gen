@@ -44,11 +44,13 @@ export class GoogleOauthGuard extends AuthGuard('google') {
       typeof req.query.redirectUri === 'string' ? req.query.redirectUri : undefined;
     const platform =
       typeof req.query.platform === 'string' ? req.query.platform : undefined;
+    const intent = this.resolveOauthIntent(req.path);
 
     const state = this.jwtService.sign(
       {
         type: 'google_oauth_state',
         nonce: randomBytes(16).toString('hex'),
+        intent,
         ...(redirectUri ? { redirectUri } : {}),
         ...(platform ? { platform } : {}),
       },
@@ -67,5 +69,13 @@ export class GoogleOauthGuard extends AuthGuard('google') {
       session: false,
       state,
     };
+  }
+
+  private resolveOauthIntent(path: string): 'login' | 'register' {
+    if (path.endsWith('/register')) {
+      return 'register';
+    }
+
+    return 'login';
   }
 }
