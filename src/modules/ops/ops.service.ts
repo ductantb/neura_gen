@@ -31,6 +31,7 @@ export class OpsService {
       ok: database.ok && redis.ok,
       timestamp: new Date().toISOString(),
       service: 'api',
+      deployment: this.getDeploymentFingerprint(),
       process: processMetrics,
       dependencies: {
         database,
@@ -50,6 +51,7 @@ export class OpsService {
     const payload = {
       ok,
       timestamp: new Date().toISOString(),
+      deployment: this.getDeploymentFingerprint(),
       checks: {
         database: database.ok,
         redis: redis.ok,
@@ -65,6 +67,16 @@ export class OpsService {
     }
 
     return payload;
+  }
+
+  private getDeploymentFingerprint() {
+    return {
+      commitSha: process.env.RAILWAY_GIT_COMMIT_SHA ?? null,
+      branch: process.env.RAILWAY_GIT_BRANCH ?? null,
+      deploymentId: process.env.RAILWAY_DEPLOYMENT_ID ?? null,
+      serviceId: process.env.RAILWAY_SERVICE_ID ?? null,
+      environmentId: process.env.RAILWAY_ENVIRONMENT_ID ?? null,
+    };
   }
 
   private async getDatabaseHealth() {

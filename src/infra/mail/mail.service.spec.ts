@@ -11,10 +11,12 @@ jest.mock('nodemailer', () => ({
 }));
 
 describe('MailService', () => {
+  const originalFetch = global.fetch;
   const buildConfigService = (overrides?: Record<string, string | undefined>) =>
     ({
       get: jest.fn((key: string) => {
         const defaults: Record<string, string | undefined> = {
+          MAIL_PROVIDER: 'smtp',
           MAIL_HOST: 'smtp.gmail.com',
           MAIL_PORT: '587',
           MAIL_SECURE: 'false',
@@ -31,6 +33,11 @@ describe('MailService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    global.fetch = originalFetch;
+  });
+
+  afterAll(() => {
+    global.fetch = originalFetch;
   });
 
   it('disables mail transport when MAIL_ENABLED=false', () => {
@@ -78,5 +85,25 @@ describe('MailService', () => {
     );
 
     expect(sendMailMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends email via Resend when MAIL_PROVIDER=resend', async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => '',
+    } as Response);
+    global.fetch = fetchMock as typeof fetch;
+
+    const service = new MailService(
+      buildConfigService({
+        MAIL_PROVIDER: 'resend',
+        RESEND_API_KEY: 're_test_key',
+      }),
+    );
+
+    await expect(service.sendWelcomeEmail('user@example.com')).resolves.toBe(true);
+    expect(createTransportMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
