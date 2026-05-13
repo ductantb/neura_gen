@@ -103,7 +103,7 @@ def _env_flag(name: str, default: bool) -> bool:
 WAN_USE_CPU_OFFLOAD = _env_flag("WAN_USE_CPU_OFFLOAD", False)
 WAN_CPU_OFFLOAD_MODE = os.environ.get("WAN_CPU_OFFLOAD_MODE", "model").strip().lower()
 WAN_ENABLE_ATTENTION_SLICING = _env_flag("WAN_ENABLE_ATTENTION_SLICING", False)
-WAN_ENABLE_VAE_TILING = _env_flag("WAN_ENABLE_VAE_TILING", True)
+WAN_ENABLE_VAE_TILING = _env_flag("WAN_ENABLE_VAE_TILING", False)
 WAN_ENABLE_VAE_SLICING = _env_flag("WAN_ENABLE_VAE_SLICING", True)
 
 cache_volume = modal.Volume.from_name("neura-video-model-cache", create_if_missing=True)
@@ -422,12 +422,27 @@ def _configure_wan_pipeline_memory(pipe):
             pipe.enable_vae_tiling()
         elif hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_tiling"):
             pipe.vae.enable_tiling()
+    else:
+        if hasattr(pipe, "disable_vae_tiling"):
+            pipe.disable_vae_tiling()
+        elif hasattr(pipe, "vae") and hasattr(pipe.vae, "disable_tiling"):
+            pipe.vae.disable_tiling()
+        elif hasattr(pipe, "vae"):
+            # Some Wan VAE builds expose only a raw flag.
+            setattr(pipe.vae, "use_tiling", False)
 
     if WAN_ENABLE_VAE_SLICING:
         if hasattr(pipe, "enable_vae_slicing"):
             pipe.enable_vae_slicing()
         elif hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_slicing"):
             pipe.vae.enable_slicing()
+    else:
+        if hasattr(pipe, "disable_vae_slicing"):
+            pipe.disable_vae_slicing()
+        elif hasattr(pipe, "vae") and hasattr(pipe.vae, "disable_slicing"):
+            pipe.vae.disable_slicing()
+        elif hasattr(pipe, "vae"):
+            setattr(pipe.vae, "use_slicing", False)
 
     if WAN_ENABLE_ATTENTION_SLICING and hasattr(pipe, "enable_attention_slicing"):
         pipe.enable_attention_slicing("max")
