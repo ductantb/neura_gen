@@ -588,8 +588,27 @@ def _load_wan_input_image(image_url: str, pipe, max_area: int):
     import requests
     from PIL import Image
 
-    response = requests.get(image_url, timeout=60)
-    response.raise_for_status()
+    try:
+        response = requests.get(
+            image_url,
+            timeout=60,
+            headers={
+                "User-Agent": "Mozilla/5.0 (compatible; NeuraGenBot/1.0)",
+                "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+            },
+        )
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        status_code = exc.response.status_code if exc.response is not None else "unknown"
+        raise ValueError(
+            f"Failed to fetch input image URL (status {status_code}). "
+            "Please use a direct public image URL or upload image to NeuraGen first."
+        ) from exc
+    except requests.RequestException as exc:
+        raise ValueError(
+            "Failed to fetch input image URL due to network error. "
+            "Please retry or use another public image URL."
+        ) from exc
 
     image = Image.open(BytesIO(response.content)).convert("RGB")
 
@@ -881,7 +900,6 @@ def _generate_wan_video_response(
     }
     if has_input_image:
         generation_kwargs["image"] = image
-        generation_kwargs["strength"] = profile["i2v_strength"]
 
     _cleanup_cuda_memory()
     result = pipe(
@@ -1013,19 +1031,24 @@ def _generate_hunyuan_video_response(
 )
 @modal.fastapi_endpoint(method="POST")
 def generate_video_wan(req: dict):
+    from fastapi import HTTPException
+
     data = GenReq.model_validate(req)
 
-    return _generate_wan_video_response(
-        prompt=data.prompt,
-        job_id=data.job_id,
-        negative_prompt=data.negative_prompt,
-        input_image_url=data.input_image_url,
-        provider=data.provider,
-        model_name=data.model_name,
-        preset_id=data.preset_id,
-        user_id=data.user_id,
-        workflow=data.workflow,
-    )
+    try:
+        return _generate_wan_video_response(
+            prompt=data.prompt,
+            job_id=data.job_id,
+            negative_prompt=data.negative_prompt,
+            input_image_url=data.input_image_url,
+            provider=data.provider,
+            model_name=data.model_name,
+            preset_id=data.preset_id,
+            user_id=data.user_id,
+            workflow=data.workflow,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.function(
