@@ -96,6 +96,19 @@ type PayosPaymentData = {
   qrCode?: string;
 };
 
+type PayosPaymentLookupData = {
+  id?: string;
+  orderCode: number;
+  amount: number;
+  amountPaid?: number;
+  amountRemaining?: number;
+  status: string;
+  createdAt?: string;
+  canceledAt?: string;
+  cancellationReason?: string;
+  transactions?: unknown;
+};
+
 type PayosApiResponse<T> = {
   code: string;
   desc: string;
@@ -299,6 +312,51 @@ export class BillingService {
   }
 
   async listMyOrders(userId: string) {
+    const orders = await this.prisma.paymentOrder.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      select: {
+        id: true,
+        provider: true,
+        type: true,
+        status: true,
+        packageCode: true,
+        amountUsd: true,
+        creditAmount: true,
+        proDurationDays: true,
+        providerOrderId: true,
+        paidAt: true,
+        createdAt: true,
+        expiresAt: true,
+        metadata: true,
+      },
+    });
+
+    const pendingPayosOrders = orders.filter(
+      (order) =>
+        order.provider === PaymentProvider.PAYOS &&
+        order.status === PaymentOrderStatus.PENDING,
+    );
+
+    if (pendingPayosOrders.length === 0) {
+      return orders;
+    }
+
+    let hasStatusChanged = false;
+    for (const order of pendingPayosOrders.slice(0, 3)) {
+      const syncResult = await this.syncPayosOrderStatus(order.id, userId, {
+        silent: true,
+      });
+      if (syncResult?.statusChanged) {
+        hasStatusChanged = true;
+      }
+    }
+
+    if (!hasStatusChanged) {
+      return orders;
+    }
+
     return this.prisma.paymentOrder.findMany({
       where: { userId },
       orderBy: { createdAt: 'desc' },
@@ -319,6 +377,10 @@ export class BillingService {
         metadata: true,
       },
     });
+  }
+
+  async syncMyOrder(userId: string, orderId: string) {
+    return this.syncPayosOrderStatus(orderId, userId, { silent: false });
   }
 
   async markOrderPaid(orderId: string, dto: MarkPaymentPaidDto) {
@@ -708,6 +770,203 @@ export class BillingService {
 
       throw new BadRequestException(`Failed to confirm payOS webhook: ${message}`);
     }
+  }
+
+  private async syncPayosOrderStatus(
+    orderId: string,
+    userId: string,
+    options: { silent: boolean },
+  ): Promise<{
+    orderId: string;
+    statusChanged: boolean;
+    status: PaymentOrderStatus | 'UNKNOWN';
+    message: string;
+  }> {
+    const order = await this.prisma.paymentOrder.findFirst({
+      where: {
+        id: orderId,
+        userId,
+      },
+      select: {
+        id: true,
+        userId: true,
+        provider: true,
+        status: true,
+        metadata: true,
+        providerOrderId: true,
+      },
+    });
+
+    if (!order) {
+      if (options.silent) {
+        return {
+          orderId,
+          statusChanged: false,
+          status: 'UNKNOWN',
+          message: 'Order not found',
+        };
+      }
+      throw new NotFoundException('Payment order not found');
+    }
+
+    if (order.provider !== PaymentProvider.PAYOS) {
+      if (options.silent) {
+        return {
+          orderId: order.id,
+          statusChanged: false,
+          status: order.status,
+          message: 'Order provider is not PAYOS',
+        };
+      }
+      throw new BadRequestException('Order provider is not PAYOS');
+    }
+
+    if (order.status === PaymentOrderStatus.PAID) {
+      return {
+        orderId: order.id,
+        statusChanged: false,
+        status: order.status,
+        message: 'Order already paid',
+      };
+    }
+
+    if (order.status !== PaymentOrderStatus.PENDING) {
+      return {
+        orderId: order.id,
+        statusChanged: false,
+        status: order.status,
+        message: 'Only pending orders can be synced',
+      };
+    }
+
+    const metadata = this.asObject(order.metadata);
+    const paymentRequestId = this.extractPayosPaymentRequestId(order.metadata);
+
+    if (!paymentRequestId) {
+      const message = `Cannot sync PAYOS order ${order.id}: missing payosOrderCode/paymentLinkId in metadata`;
+      if (!options.silent) {
+        throw new BadRequestException(message);
+      }
+      this.logger.warn(message);
+      return {
+        orderId: order.id,
+        statusChanged: false,
+        status: order.status,
+        message,
+      };
+    }
+
+    const config = this.getPayosConfig();
+    const paymentInfo = await axios.get<PayosApiResponse<PayosPaymentLookupData>>(
+      `${config.endpoint}/v2/payment-requests/${encodeURIComponent(
+        String(paymentRequestId),
+      )}`,
+      {
+        headers: this.buildPayosHeaders(config),
+        timeout: 30000,
+      },
+    );
+
+    if (paymentInfo.data.code !== '00') {
+      const message = `payOS lookup failed: ${paymentInfo.data.desc} (code ${paymentInfo.data.code})`;
+      if (!options.silent) {
+        throw new BadRequestException(message);
+      }
+      this.logger.warn(message);
+      return {
+        orderId: order.id,
+        statusChanged: false,
+        status: order.status,
+        message,
+      };
+    }
+
+    if (paymentInfo.data.signature) {
+      const signatureValid = this.verifyPayosDataSignature(
+        paymentInfo.data.data as unknown as Record<string, unknown>,
+        paymentInfo.data.signature,
+        config.checksumKey,
+      );
+      if (!signatureValid) {
+        const message = `payOS lookup signature is invalid. orderId=${order.id}`;
+        if (!options.silent) {
+          throw new BadRequestException(message);
+        }
+        this.logger.warn(message);
+        return {
+          orderId: order.id,
+          statusChanged: false,
+          status: order.status,
+          message,
+        };
+      }
+    }
+
+    const lookupData = paymentInfo.data.data;
+    const expectedAmount = this.extractAmountVnd(order.metadata);
+    if (expectedAmount !== null && lookupData.amount !== expectedAmount) {
+      const message = `payOS lookup amount mismatch. orderId=${order.id}, expected=${expectedAmount}, actual=${lookupData.amount}`;
+      if (!options.silent) {
+        throw new BadRequestException(message);
+      }
+      this.logger.warn(message);
+      return {
+        orderId: order.id,
+        statusChanged: false,
+        status: order.status,
+        message,
+      };
+    }
+
+    const normalizedStatus = (lookupData.status ?? '').toUpperCase();
+    const isPaidByStatus = ['PAID', 'SUCCESS', 'COMPLETED'].includes(
+      normalizedStatus,
+    );
+    const isPaidByAmount =
+      typeof lookupData.amountPaid === 'number' &&
+      lookupData.amount > 0 &&
+      lookupData.amountPaid >= lookupData.amount;
+    const isPaid = isPaidByStatus || isPaidByAmount;
+    const payosLookupResponse = JSON.parse(
+      JSON.stringify(paymentInfo.data),
+    ) as Prisma.InputJsonValue;
+
+    await this.prisma.paymentOrder.update({
+      where: { id: order.id },
+      data: {
+        metadata: {
+          ...metadata,
+          payosLastLookup: {
+            receivedAt: new Date().toISOString(),
+            source: 'payos_lookup',
+            response: payosLookupResponse,
+          },
+          integrationStatus: isPaid
+            ? 'payos_lookup_paid_detected'
+            : 'payos_lookup_pending',
+        },
+      },
+    });
+
+    if (!isPaid) {
+      return {
+        orderId: order.id,
+        statusChanged: false,
+        status: order.status,
+        message: `payOS status is ${lookupData.status}`,
+      };
+    }
+
+    await this.markOrderPaid(order.id, {
+      providerOrderId: order.providerOrderId ?? String(lookupData.orderCode),
+    });
+
+    return {
+      orderId: order.id,
+      statusChanged: true,
+      status: PaymentOrderStatus.PAID,
+      message: 'Order was marked as paid via payOS lookup',
+    };
   }
 
   private async createMomoPayment(
@@ -1151,6 +1410,25 @@ export class BillingService {
     }
 
     return String(value);
+  }
+
+  private extractPayosPaymentRequestId(
+    metadata: Prisma.JsonValue | null,
+  ): string | number | null {
+    const source = this.asObject(metadata);
+    const payosOrderCode = source.payosOrderCode;
+    if (typeof payosOrderCode === 'number' && Number.isFinite(payosOrderCode)) {
+      return payosOrderCode;
+    }
+
+    const payosMeta = this.asObject(source.payos as Prisma.JsonValue);
+    const payosData = this.asObject(payosMeta.data as Prisma.JsonValue);
+    const paymentLinkId = payosData.paymentLinkId;
+    if (typeof paymentLinkId === 'string' && paymentLinkId.length > 0) {
+      return paymentLinkId;
+    }
+
+    return null;
   }
 
   private async generatePayosOrderCode(): Promise<number> {

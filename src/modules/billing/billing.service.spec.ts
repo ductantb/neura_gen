@@ -422,4 +422,64 @@ describe('BillingService', () => {
 
     postSpy.mockRestore();
   });
+
+  it('syncs a pending payOS order and marks it as paid when payOS lookup confirms payment', async () => {
+    const configMap: Record<string, string> = {
+      PAYOS_ENDPOINT: 'https://api-merchant.payos.vn',
+      PAYOS_CLIENT_ID: 'client-id',
+      PAYOS_API_KEY: 'api-key',
+      PAYOS_CHECKSUM_KEY: 'checksum-key',
+      PAYOS_RETURN_URL: 'http://localhost:5173/billing/payos-return',
+      PAYOS_CANCEL_URL: 'http://localhost:5173/billing/payos-return',
+    };
+    configService.get.mockImplementation((key: string) => configMap[key]);
+
+    prisma.paymentOrder.findFirst.mockResolvedValue({
+      id: 'order-1',
+      userId: 'user-1',
+      provider: PaymentProvider.PAYOS,
+      status: PaymentOrderStatus.PENDING,
+      metadata: {
+        amountVnd: 124750,
+        payosOrderCode: 123456789012345,
+      },
+      providerOrderId: null,
+    });
+    prisma.paymentOrder.update.mockResolvedValue({});
+
+    const getSpy = jest.spyOn(axios, 'get').mockResolvedValue({
+      data: {
+        code: '00',
+        desc: 'success',
+        data: {
+          id: 'plink_1',
+          orderCode: 123456789012345,
+          amount: 124750,
+          amountPaid: 124750,
+          amountRemaining: 0,
+          status: 'PAID',
+        },
+      },
+    } as any);
+
+    const markOrderPaidSpy = jest
+      .spyOn(service, 'markOrderPaid')
+      .mockResolvedValue({ status: PaymentOrderStatus.PAID } as any);
+
+    const result = await service.syncMyOrder('user-1', 'order-1');
+
+    expect(markOrderPaidSpy).toHaveBeenCalledWith('order-1', {
+      providerOrderId: '123456789012345',
+    });
+    expect(result).toEqual(
+      expect.objectContaining({
+        orderId: 'order-1',
+        statusChanged: true,
+        status: PaymentOrderStatus.PAID,
+      }),
+    );
+
+    markOrderPaidSpy.mockRestore();
+    getSpy.mockRestore();
+  });
 });

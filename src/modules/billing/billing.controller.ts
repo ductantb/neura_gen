@@ -42,6 +42,15 @@ export class BillingController {
 
   @ApiOperation({
     summary:
+      'Đồng bộ trạng thái thanh toán đơn PAYOS (fallback khi webhook chưa về)',
+  })
+  @Post('orders/:id/sync')
+  syncMyOrder(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
+    return this.billingService.syncMyOrder(user.sub, id);
+  }
+
+  @ApiOperation({
+    summary:
       'Đánh dấu đơn đã thanh toán (nội bộ/test). Sẽ được thay bằng webhook MoMo/bank ở bước tích hợp gateway.',
   })
   @Roles(UserRole.ADMIN)
