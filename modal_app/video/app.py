@@ -27,12 +27,14 @@ LTX_GUIDANCE_SCALE = 5.5
 LTX_VIDEO_FPS = 24
 # Tuned for L40S: prioritize stable quality while keeping runtime practical.
 WAN_MAX_AREA = 480 * 832
+WAN_T2V_MAX_AREA = 512 * 896
 WAN_NUM_FRAMES_5S = 121
 WAN_NUM_FRAMES_8S = 193
 WAN_NUM_INFERENCE_STEPS = 40
+WAN_T2V_NUM_INFERENCE_STEPS = 44
 WAN_GUIDANCE_SCALE = 5.0
 WAN_I2V_GUIDANCE_DELTA = -0.2
-WAN_T2V_GUIDANCE_DELTA = 0.2
+WAN_T2V_GUIDANCE_DELTA = 0.5
 WAN_I2V_STRENGTH = 0.75
 WAN_VIDEO_FPS = 24
 HUNYUAN_LANDSCAPE_WIDTH = 960
@@ -292,8 +294,10 @@ def _resolve_wan_profile(preset_id: str | None):
     if resolved_preset_id == WAN_STANDARD_8S_PRESET_ID:
         return {
             "max_area": WAN_MAX_AREA,
+            "max_area_t2v": WAN_T2V_MAX_AREA,
             "num_frames": WAN_NUM_FRAMES_8S,
-            "num_inference_steps": WAN_NUM_INFERENCE_STEPS,
+            "num_inference_steps_i2v": WAN_NUM_INFERENCE_STEPS,
+            "num_inference_steps_t2v": WAN_T2V_NUM_INFERENCE_STEPS,
             "guidance_scale_i2v": WAN_GUIDANCE_SCALE + WAN_I2V_GUIDANCE_DELTA,
             "guidance_scale_t2v": WAN_GUIDANCE_SCALE + WAN_T2V_GUIDANCE_DELTA,
             "i2v_strength": WAN_I2V_STRENGTH,
@@ -308,8 +312,10 @@ def _resolve_wan_profile(preset_id: str | None):
     if resolved_preset_id == WAN_STANDARD_PRESET_ID:
         return {
             "max_area": WAN_MAX_AREA,
+            "max_area_t2v": WAN_T2V_MAX_AREA,
             "num_frames": WAN_NUM_FRAMES_5S,
-            "num_inference_steps": WAN_NUM_INFERENCE_STEPS,
+            "num_inference_steps_i2v": WAN_NUM_INFERENCE_STEPS,
+            "num_inference_steps_t2v": WAN_T2V_NUM_INFERENCE_STEPS,
             "guidance_scale_i2v": WAN_GUIDANCE_SCALE + WAN_I2V_GUIDANCE_DELTA,
             "guidance_scale_t2v": WAN_GUIDANCE_SCALE + WAN_T2V_GUIDANCE_DELTA,
             "i2v_strength": WAN_I2V_STRENGTH,
@@ -880,7 +886,7 @@ def _generate_wan_video_response(
         )
     else:
         pipe = _load_wan_t2v_pipeline()
-        height, width = _resolve_wan_text_dimensions(pipe, profile["max_area"])
+        height, width = _resolve_wan_text_dimensions(pipe, profile["max_area_t2v"])
 
     generator = torch.Generator(device="cpu").manual_seed(_seed_from_job(job_id))
 
@@ -890,7 +896,11 @@ def _generate_wan_video_response(
         "height": height,
         "width": width,
         "num_frames": profile["num_frames"],
-        "num_inference_steps": profile["num_inference_steps"],
+        "num_inference_steps": (
+            profile["num_inference_steps_i2v"]
+            if has_input_image
+            else profile["num_inference_steps_t2v"]
+        ),
         "guidance_scale": (
             profile["guidance_scale_i2v"]
             if has_input_image
@@ -937,7 +947,11 @@ def _generate_wan_video_response(
             "width": width,
             "height": height,
             "num_frames": profile["num_frames"],
-            "num_inference_steps": profile["num_inference_steps"],
+            "num_inference_steps": (
+                profile["num_inference_steps_i2v"]
+                if has_input_image
+                else profile["num_inference_steps_t2v"]
+            ),
             "guidance_scale": (
                 profile["guidance_scale_i2v"]
                 if has_input_image
