@@ -194,6 +194,12 @@ export class MyProfileResponseDto {
   })
   avatarUrl?: string | null;
 
+  @ApiProperty({
+    description: 'Tài khoản hiện tại đã liên kết Google hay chưa',
+    example: true,
+  })
+  isGoogleLinked: boolean;
+
   @ApiPropertyOptional({
     description: 'Tiểu sử ngắn của người dùng',
     example: 'Đam mê công nghệ AI và thiết kế chuyển động.',
