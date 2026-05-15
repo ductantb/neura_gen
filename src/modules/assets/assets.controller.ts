@@ -1,4 +1,15 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, BadRequestException, Req } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Delete,
+  BadRequestException,
+  Req,
+  Res,
+} from '@nestjs/common';
 import { AssetsService } from './assets.service';
 import { CreateAssetDto } from './dto/create-asset.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
@@ -7,6 +18,8 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { StorageService } from '../../infra/storage/storage.service';
 import { UploadAssetDto } from './dto/upload-asset.dto';
 import { Throttle } from '@nestjs/throttler';
+import { Public } from 'src/common/decorators/public.decorator';
+import type { Response } from 'express';
 
 @Controller('assets')
 export class AssetsController {
@@ -35,6 +48,13 @@ export class AssetsController {
   @Get(':id')
   async getAsset(@Param('id') id: string) {
     return this.assetsService.getAssetById(id);
+  }
+
+  @Public()
+  @Get('view/:id')
+  async viewAsset(@Param('id') id: string, @Res() res: Response) {
+    const signed = await this.assetsService.getDownloadSignedUrl(id);
+    return res.redirect(302, signed.url);
   }
 
   @Get('download/:id')
