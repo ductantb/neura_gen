@@ -48,14 +48,22 @@ export class FollowsController {
   }
 
   @ApiOperation({ summary: 'Hủy theo dõi một user' })
+  @ApiQuery({
+    name: 'followerId',
+    required: false,
+    description:
+      'Chỉ ADMIN: userId của người follower cần gỡ quan hệ follow với :userId.',
+  })
   @Delete('follows/:userId')
   remove(
     @Param('userId') userId: string,
     @CurrentUser() currentUser: JwtPayload,
+    @Query('followerId') followerId?: string,
   ) {
     return this.followsService.remove(
       { followerId: currentUser.sub, role: currentUser.role },
       userId,
+      followerId,
     );
   }
 }

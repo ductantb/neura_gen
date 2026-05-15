@@ -1,4 +1,8 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { CreateFollowDto } from './dto/create-follow.dto';
 import { PrismaService } from 'src/infra/prisma/prisma.service';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
@@ -106,11 +110,31 @@ export class FollowsService {
     };
   }
 
-  async remove(user: { followerId: string, role: UserRole }, followingId: string) {
+  async remove(
+    user: { followerId: string; role: UserRole },
+    followingId: string,
+    targetFollowerId?: string,
+  ) {
+    const normalizedTargetFollowerId = targetFollowerId?.trim();
+    if (
+      normalizedTargetFollowerId &&
+      user.role !== UserRole.ADMIN &&
+      normalizedTargetFollowerId !== user.followerId
+    ) {
+      throw new ForbiddenException(
+        'Chỉ ADMIN mới được xoá follow của người dùng khác',
+      );
+    }
+
+    const followOwnerId =
+      user.role === UserRole.ADMIN && normalizedTargetFollowerId
+        ? normalizedTargetFollowerId
+        : user.followerId;
+
     const follow = await this.prismaService.follow.findUnique({
       where: {
         followerId_followingId: {
-          followerId: user.followerId,
+          followerId: followOwnerId,
           followingId,
         },
       },
@@ -124,7 +148,7 @@ export class FollowsService {
     return this.prismaService.follow.delete({
       where: {
         followerId_followingId: {
-          followerId: user.followerId,
+          followerId: followOwnerId,
           followingId,
         },
       },

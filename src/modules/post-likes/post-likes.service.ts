@@ -1,4 +1,8 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { CreatePostLikeDto } from './dto/create-post-like.dto';
 import { PrismaService } from 'src/infra/prisma/prisma.service';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
@@ -64,11 +68,35 @@ export class PostLikesService {
     };
   }
 
-  async remove(postId: string, user: { sub: string, role: UserRole }) {
+  async remove(postId: string, user: { sub: string; role: UserRole }) {
+    return this.removeWithTarget(postId, user);
+  }
+
+  async removeWithTarget(
+    postId: string,
+    user: { sub: string; role: UserRole },
+    targetUserId?: string,
+  ) {
+    const normalizedTargetUserId = targetUserId?.trim();
+    if (
+      normalizedTargetUserId &&
+      user.role !== UserRole.ADMIN &&
+      normalizedTargetUserId !== user.sub
+    ) {
+      throw new ForbiddenException(
+        'Chỉ ADMIN mới được xoá post like của người dùng khác',
+      );
+    }
+
+    const likeOwnerId =
+      user.role === UserRole.ADMIN && normalizedTargetUserId
+        ? normalizedTargetUserId
+        : user.sub;
+
     const postLike = await this.prismaService.postLike.findUnique({
       where: {
         userId_postId: {
-          userId: user.sub,
+          userId: likeOwnerId,
           postId,
         },
       },
@@ -83,7 +111,7 @@ export class PostLikesService {
       const deleted = await prisma.postLike.delete({
         where: {
           userId_postId: {
-            userId: user.sub,
+            userId: likeOwnerId,
             postId,
           },
         },

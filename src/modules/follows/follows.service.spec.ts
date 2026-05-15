@@ -1,9 +1,13 @@
 import { FollowsService } from './follows.service';
+import { ForbiddenException } from '@nestjs/common';
+import { UserRole } from '@prisma/client';
 
 describe('FollowsService', () => {
   const prisma = {
     follow: {
       create: jest.fn(),
+      findUnique: jest.fn(),
+      delete: jest.fn(),
     },
     post: {
       findUnique: jest.fn(),
@@ -66,5 +70,49 @@ describe('FollowsService', () => {
     });
 
     expect(exploreService.recordEvent).not.toHaveBeenCalled();
+  });
+
+  it('allows ADMIN to remove another user follow relation when followerId is provided', async () => {
+    prisma.follow.findUnique.mockResolvedValue({
+      id: 'follow-1',
+      followerId: 'user-2',
+      followingId: 'creator-1',
+    });
+    prisma.follow.delete.mockResolvedValue({ id: 'follow-1' });
+
+    await service.remove(
+      { followerId: 'admin-1', role: UserRole.ADMIN },
+      'creator-1',
+      'user-2',
+    );
+
+    expect(prisma.follow.findUnique).toHaveBeenCalledWith({
+      where: {
+        followerId_followingId: {
+          followerId: 'user-2',
+          followingId: 'creator-1',
+        },
+      },
+    });
+    expect(prisma.follow.delete).toHaveBeenCalledWith({
+      where: {
+        followerId_followingId: {
+          followerId: 'user-2',
+          followingId: 'creator-1',
+        },
+      },
+    });
+  });
+
+  it('rejects non-admin attempts to remove another user follow relation', async () => {
+    await expect(
+      service.remove(
+        { followerId: 'user-1', role: UserRole.FREE },
+        'creator-1',
+        'user-2',
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(prisma.follow.findUnique).not.toHaveBeenCalled();
   });
 });

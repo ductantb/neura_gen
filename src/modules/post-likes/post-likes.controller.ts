@@ -7,7 +7,6 @@ import {
   Param,
   Delete,
   Query,
-  Req,
 } from '@nestjs/common';
 import { PostLikesService } from './post-likes.service';
 import { CreatePostLikeDto } from './dto/create-post-like.dto';
@@ -64,15 +63,29 @@ export class PostLikesController {
     summary: 'Unlike bài viết',
     description: 'Người dùng bỏ like bài viết.',
   })
+  @ApiQuery({
+    name: 'userId',
+    required: false,
+    description:
+      'Chỉ ADMIN: userId chủ like cần xoá. Bỏ trống thì xoá like của chính tài khoản hiện tại.',
+  })
   @ApiOkResponse({
     description: 'Unlike bài viết thành công',
   })
   @Delete()
-  remove(@Param('postId') postId: string, @CurrentUser() user: JwtPayload) {
-    return this.postLikesService.remove(postId, {
-      sub: user.sub,
-      role: user.role,
-    });
+  remove(
+    @Param('postId') postId: string,
+    @CurrentUser() user: JwtPayload,
+    @Query('userId') targetUserId?: string,
+  ) {
+    return this.postLikesService.removeWithTarget(
+      postId,
+      {
+        sub: user.sub,
+        role: user.role,
+      },
+      targetUserId,
+    );
   }
 
   private resolvePostId(routePostId: string, bodyPostId?: string) {
