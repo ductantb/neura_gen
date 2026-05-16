@@ -441,7 +441,7 @@ export class ExploreService {
     };
   }
 
-  async syncPost(postId: string) {
+  async syncPost(postId: string, topicHint?: string | null) {
     const post = await this.prismaService.post.findUnique({
       where: { id: postId },
       select: {
@@ -467,14 +467,23 @@ export class ExploreService {
       return;
     }
 
+    const existingExploreItem = await this.prismaService.exploreItem.findUnique({
+      where: { postId: post.id },
+      select: { topic: true },
+    });
     const score = this.calculateScore(post);
+    const resolvedTopic = this.resolvePostTopic({
+      topicHint,
+      caption: post.caption,
+      existingTopic: existingExploreItem?.topic,
+    });
 
     await this.prismaService.exploreItem.upsert({
       where: { postId: post.id },
       update: {
         assetVersionId: post.assetVersionId,
         title: this.extractTitle(post.caption),
-        topic: this.extractTopic(post.caption),
+        topic: resolvedTopic,
         score,
         isTrending: this.computeTrendingFlag(post.createdAt, score),
       },
@@ -482,7 +491,7 @@ export class ExploreService {
         postId: post.id,
         assetVersionId: post.assetVersionId,
         title: this.extractTitle(post.caption),
-        topic: this.extractTopic(post.caption),
+        topic: resolvedTopic,
         score,
         isTrending: this.computeTrendingFlag(post.createdAt, score),
       },
@@ -964,6 +973,36 @@ export class ExploreService {
     if (/(scifi|sci-fi|cyberpunk|future)/.test(normalized)) return 'scifi';
 
     return 'general';
+  }
+
+  private resolvePostTopic(options: {
+    topicHint?: string | null;
+    caption?: string | null;
+    existingTopic?: string | null;
+  }): string {
+    const hinted = this.normalizeTopic(options.topicHint);
+    if (hinted) {
+      return hinted;
+    }
+
+    const captionTopic = this.extractTopic(options.caption);
+    if (captionTopic !== 'general') {
+      return captionTopic;
+    }
+
+    const existing = this.normalizeTopic(options.existingTopic);
+    if (existing) {
+      return existing;
+    }
+
+    return 'general';
+  }
+
+  private normalizeTopic(rawTopic?: string | null): string | null {
+    const normalized = rawTopic?.trim().toLowerCase();
+    if (!normalized) return null;
+    const stripped = normalized.replace(/^#+/, '');
+    return stripped || null;
   }
 
   private async serializeExploreItem(item: ExploreItemWithRelations) {

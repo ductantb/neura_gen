@@ -83,6 +83,7 @@ export class PostsService {
 
   async create(userId: string, createPostDto: CreatePostDto) {
     const persistedPostData = this.pickCreatePostData(createPostDto);
+    const normalizedTopic = this.normalizeTopic(createPostDto.topic);
 
     const post = await this.prismaService.post.create({
       data: {
@@ -91,7 +92,7 @@ export class PostsService {
       },
     });
 
-    await this.exploreService.syncPost(post.id);
+    await this.exploreService.syncPost(post.id, normalizedTopic);
     return this.findOne(post.id);
   }
 
@@ -127,14 +128,19 @@ export class PostsService {
       throw new ForbiddenException('Không có quyền cập nhật post này');
 
     const persistedPostData = this.pickUpdatePostData(updatePostDto);
+    const normalizedTopic = this.normalizeTopic(updatePostDto.topic);
+    const hasPersistedUpdate = Object.keys(persistedPostData).length > 0;
+    const targetPostId = id;
 
-    const updatedPost = await this.prismaService.post.update({
-      where: { id },
-      data: persistedPostData,
-    });
+    if (hasPersistedUpdate) {
+      await this.prismaService.post.update({
+        where: { id },
+        data: persistedPostData,
+      });
+    }
 
-    await this.exploreService.syncPost(updatedPost.id);
-    return this.findOne(updatedPost.id);
+    await this.exploreService.syncPost(targetPostId, normalizedTopic);
+    return this.findOne(targetPostId);
   }
 
   async remove(id: string, user: { sub: string; role: UserRole }) {
@@ -283,4 +289,12 @@ export class PostsService {
       }),
     };
   }
+
+  private normalizeTopic(rawTopic?: string | null): string | null {
+    const normalized = rawTopic?.trim().toLowerCase();
+    if (!normalized) return null;
+    const stripped = normalized.replace(/^#+/, '');
+    return stripped || null;
+  }
 }
+
