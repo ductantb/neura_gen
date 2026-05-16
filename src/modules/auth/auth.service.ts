@@ -132,9 +132,8 @@ export class AuthService {
       );
     }
 
-    throw new UnauthorizedException(
-      'Google account is not registered. Please register first.',
-    );
+    // First-time Google login: auto create account and issue tokens.
+    return this.registerWithGoogle(profile);
   }
 
   async registerWithGoogle(profile: GoogleProfilePayload): Promise<AuthResponseDto> {

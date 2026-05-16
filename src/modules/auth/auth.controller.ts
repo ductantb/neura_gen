@@ -96,7 +96,7 @@ export class AuthController {
   @ApiOperation({
     summary: 'Đăng nhập nhanh bằng Google OAuth2',
     description:
-      'Chuyển hướng người dùng sang Google để xác thực. Có thể truyền redirectUri/platform qua query.',
+      'Chuyển hướng người dùng sang Google để xác thực. Nếu chưa có tài khoản sẽ tự động đăng ký và đăng nhập. Có thể truyền redirectUri/platform qua query.',
   })
   @Public()
   @Get('google/login')
@@ -179,7 +179,7 @@ export class AuthController {
   @ApiOperation({
     summary: 'Đăng nhập Google bằng ID token (Android/Web SDK)',
     description:
-      'Nhận idToken từ Google SDK và trả accessToken/refreshToken của hệ thống.',
+      'Nhận idToken từ Google SDK và trả accessToken/refreshToken của hệ thống. Nếu chưa có tài khoản sẽ tự động đăng ký và đăng nhập.',
   })
   @ApiBody({ type: GoogleTokenLoginDto })
   @ApiOkResponse({

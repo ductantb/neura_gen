@@ -22,6 +22,10 @@ describe('ExploreService', () => {
   const storageService = {
     getDownloadSignedUrl: jest.fn(),
   };
+  const redisClient = {
+    get: jest.fn(),
+    set: jest.fn(),
+  };
 
   let service: ExploreService;
 
@@ -54,10 +58,16 @@ describe('ExploreService', () => {
   beforeEach(() => {
     jest.resetAllMocks();
     process.env.EXPLORE_FOR_YOU_DEBUG_ENABLED = 'false';
+    redisClient.get.mockResolvedValue(null);
+    redisClient.set.mockResolvedValue('OK');
     storageService.getDownloadSignedUrl.mockResolvedValue({
       url: 'https://signed.example/mock.jpg',
     });
-    service = new ExploreService(prismaService as any, storageService as any);
+    service = new ExploreService(
+      prismaService as any,
+      storageService as any,
+      redisClient as any,
+    );
   });
 
   afterAll(() => {
@@ -101,6 +111,63 @@ describe('ExploreService', () => {
         orderBy: [{ score: 'desc' }, { post: { createdAt: 'desc' } }],
       }),
     );
+  });
+
+  it('returns cached public explore response when available', async () => {
+    redisClient.get.mockResolvedValueOnce(
+      JSON.stringify({
+        mode: 'trending',
+        data: [{ id: 'cached-item' }],
+        nextCursor: null,
+        limit: 20,
+      }),
+    );
+
+    const result = await service.getExplore({ mode: 'trending', limit: 20 });
+
+    expect(result).toEqual({
+      mode: 'trending',
+      data: [{ id: 'cached-item' }],
+      nextCursor: null,
+      limit: 20,
+    });
+    expect(prismaService.exploreItem.findMany).not.toHaveBeenCalled();
+  });
+
+  it('serves stale public cache and triggers background revalidation', async () => {
+    redisClient.get.mockResolvedValueOnce(
+      JSON.stringify({
+        payload: {
+          mode: 'trending',
+          data: [{ id: 'stale-item' }],
+          nextCursor: null,
+          limit: 20,
+        },
+        freshUntilMs: Date.now() - 1_000,
+        staleUntilMs: Date.now() + 30_000,
+      }),
+    );
+    prismaService.exploreItem.findMany.mockResolvedValueOnce([]);
+
+    const result = await service.getExplore({ mode: 'trending', limit: 20 });
+
+    expect(result).toEqual({
+      mode: 'trending',
+      data: [{ id: 'stale-item' }],
+      nextCursor: null,
+      limit: 20,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(redisClient.set).toHaveBeenCalledWith(
+      expect.stringContaining('revalidate-lock'),
+      '1',
+      'EX',
+      5,
+      'NX',
+    );
+    expect(prismaService.exploreItem.findMany).toHaveBeenCalled();
   });
 
   it('falls back to trending when the user has no topic profile and follows nobody', async () => {

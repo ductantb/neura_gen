@@ -88,6 +88,10 @@ JWT_REFRESH_EXPIRES_IN=7d
 PORT=3000
 THROTTLE_TTL_MS=60000
 THROTTLE_LIMIT=120
+EXPLORE_PUBLIC_CACHE_TTL_SECONDS=20
+EXPLORE_PUBLIC_CACHE_STALE_TTL_SECONDS=60
+EXPLORE_FOR_YOU_CACHE_TTL_SECONDS=10
+EXPLORE_FOR_YOU_CACHE_STALE_TTL_SECONDS=30
 LOG_LEVEL=info
 # Optional: protect /ops/metrics in production
 OPS_METRICS_TOKEN=replace_with_strong_random_secret
@@ -176,6 +180,10 @@ PAYOS_PARTNER_CODE=optional_partner_code
 - `RUN_WORKER`: bật/tắt worker trong tiến trình hiện tại
 - `THROTTLE_TTL_MS`: cửa sổ thời gian rate-limit mặc định (milliseconds)
 - `THROTTLE_LIMIT`: số request tối đa trong mỗi cửa sổ rate-limit mặc định
+- `EXPLORE_PUBLIC_CACHE_TTL_SECONDS`: thời gian cache "fresh" cho `GET /explore`
+- `EXPLORE_PUBLIC_CACHE_STALE_TTL_SECONDS`: thời gian cache "stale" cho `GET /explore` (phục vụ stale-while-revalidate)
+- `EXPLORE_FOR_YOU_CACHE_TTL_SECONDS`: thời gian cache "fresh" cho `GET /explore/for-you`
+- `EXPLORE_FOR_YOU_CACHE_STALE_TTL_SECONDS`: thời gian cache "stale" cho `GET /explore/for-you` (phục vụ stale-while-revalidate)
 - `LOG_LEVEL`: mức log JSON (`debug|info|warn|error`)
 - `OPS_METRICS_TOKEN`: token bảo vệ endpoint `GET /ops/metrics` (đọc từ header `x-ops-token`)
 - `AWS_*`, `AWS_S3_BUCKET`: cấu hình lưu file lên S3

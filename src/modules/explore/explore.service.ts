@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { AssetRole, Prisma, ExploreEventType } from '@prisma/client';
 import { PrismaService } from 'src/infra/prisma/prisma.service';
@@ -7,6 +7,8 @@ import { ExploreQueryDto } from './dto/explore-query.dto';
 import { RecordExploreEventDto } from './dto/record-explore-event.dto';
 import { BatchRecordExploreEventsDto } from './dto/batch-record-explore-events.dto';
 import { SearchExploreByTopicDto } from './dto/search-explore-by-topic.dto';
+import { REDIS_CLIENT } from 'src/common/constants';
+import Redis from 'ioredis';
 
 type ExploreMode = 'trending' | 'new' | 'top';
 
@@ -80,10 +82,17 @@ type ExploreEventInput = Pick<
 @Injectable()
 export class ExploreService {
   private readonly logger = new Logger(ExploreService.name);
+  private static readonly CACHE_VERSION = 'v1';
+  private static readonly DEFAULT_PUBLIC_CACHE_TTL_SECONDS = 20;
+  private static readonly DEFAULT_PUBLIC_STALE_TTL_SECONDS = 60;
+  private static readonly DEFAULT_FOR_YOU_CACHE_TTL_SECONDS = 10;
+  private static readonly DEFAULT_FOR_YOU_STALE_TTL_SECONDS = 30;
+  private static readonly CACHE_REVALIDATE_LOCK_TTL_SECONDS = 5;
 
   constructor(
     private readonly prismaService: PrismaService,
     private readonly storageService: StorageService,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
   async getExplore(query: ExploreQueryDto) {
@@ -91,11 +100,43 @@ export class ExploreService {
 
     const resolvedMode = this.resolvePublicMode(mode, sort);
     const normalizedTopic = topic?.trim().toLowerCase();
+    const cacheKey = this.buildPublicExploreCacheKey({
+      mode: resolvedMode,
+      topic: normalizedTopic,
+      trending,
+      sort,
+      limit,
+      cursor,
+    });
+    return this.getCachedWithStaleWhileRevalidate({
+      key: cacheKey,
+      freshTtlSeconds: this.getPublicExploreCacheTtlSeconds(),
+      staleTtlSeconds: this.getPublicExploreStaleTtlSeconds(),
+      producer: () =>
+        this.buildPublicExploreResponse({
+          normalizedTopic,
+          trending,
+          sort,
+          resolvedMode,
+          limit,
+          cursor,
+        }),
+    });
+  }
 
+  private async buildPublicExploreResponse(options: {
+    normalizedTopic?: string;
+    trending?: string;
+    sort?: ExploreQueryDto['sort'];
+    resolvedMode: ExploreMode;
+    limit: number;
+    cursor?: string;
+  }) {
     const where: Prisma.ExploreItemWhereInput = {
-      ...(normalizedTopic && { topic: normalizedTopic }),
-      ...(trending && { isTrending: trending === 'true' }),
-      ...(resolvedMode === 'trending' && !trending && { isTrending: true }),
+      ...(options.normalizedTopic && { topic: options.normalizedTopic }),
+      ...(options.trending && { isTrending: options.trending === 'true' }),
+      ...(options.resolvedMode === 'trending' &&
+        !options.trending && { isTrending: true }),
       post: {
         isPublic: true,
       },
@@ -103,21 +144,21 @@ export class ExploreService {
 
     const items = await this.prismaService.exploreItem.findMany({
       where,
-      take: limit + 1,
-      skip: cursor ? 1 : 0,
-      ...(cursor && { cursor: { id: cursor } }),
-      orderBy: this.buildOrderBy(resolvedMode, sort),
+      take: options.limit + 1,
+      skip: options.cursor ? 1 : 0,
+      ...(options.cursor && { cursor: { id: options.cursor } }),
+      orderBy: this.buildOrderBy(options.resolvedMode, options.sort),
       include: EXPLORE_ITEM_INCLUDE,
     });
 
-    const hasNext = items.length > limit;
+    const hasNext = items.length > options.limit;
     if (hasNext) items.pop();
 
     return {
-      mode: resolvedMode,
+      mode: options.resolvedMode,
       data: await Promise.all(items.map((item) => this.serializeExploreItem(item))),
       nextCursor: hasNext ? items[items.length - 1].id : null,
-      limit,
+      limit: options.limit,
     };
   }
 
@@ -136,6 +177,47 @@ export class ExploreService {
     const { topic, limit = 20, cursor, debug } = query;
     const normalizedTopic = topic?.trim().toLowerCase();
     const debugEnabled = this.isForYouDebugEnabled(debug);
+
+    // Skip cache for debug mode because payload includes internal scoring details.
+    const shouldUseCache = !(debugEnabled || debug === 'true');
+    if (shouldUseCache) {
+      const cacheKey = this.buildForYouCacheKey({
+        userId,
+        topic: normalizedTopic,
+        limit,
+        cursor,
+      });
+
+      return this.getCachedWithStaleWhileRevalidate({
+        key: cacheKey,
+        freshTtlSeconds: this.getForYouCacheTtlSeconds(),
+        staleTtlSeconds: this.getForYouStaleTtlSeconds(),
+        producer: () =>
+          this.buildForYouResponse({
+            userId,
+            query,
+            normalizedTopic,
+            debugEnabled,
+          }),
+      });
+    }
+
+    return this.buildForYouResponse({
+      userId,
+      query,
+      normalizedTopic,
+      debugEnabled,
+    });
+  }
+
+  private async buildForYouResponse(options: {
+    userId: string;
+    query: ExploreQueryDto;
+    normalizedTopic?: string;
+    debugEnabled: boolean;
+  }) {
+    const { userId, query, normalizedTopic, debugEnabled } = options;
+    const { limit = 20, cursor } = query;
 
     const [profiles, followings, hiddenRows] = await Promise.all([
       this.prismaService.userTopicProfile.findMany({
@@ -160,7 +242,7 @@ export class ExploreService {
 
     if (profiles.length === 0 && followings.length === 0) {
       const fallback = await this.getExplore({
-        ...query,
+        ...options.query,
         mode: 'trending',
       });
 
@@ -1003,6 +1085,214 @@ export class ExploreService {
     if (!normalized) return null;
     const stripped = normalized.replace(/^#+/, '');
     return stripped || null;
+  }
+
+  private buildPublicExploreCacheKey(options: {
+    mode: ExploreMode;
+    topic?: string;
+    trending?: string;
+    sort?: ExploreQueryDto['sort'];
+    limit: number;
+    cursor?: string;
+  }) {
+    return [
+      'explore',
+      ExploreService.CACHE_VERSION,
+      'public',
+      `mode=${options.mode}`,
+      `topic=${options.topic ?? ''}`,
+      `trending=${options.trending ?? ''}`,
+      `sort=${options.sort ?? ''}`,
+      `limit=${options.limit}`,
+      `cursor=${options.cursor ?? ''}`,
+    ].join(':');
+  }
+
+  private buildForYouCacheKey(options: {
+    userId: string;
+    topic?: string;
+    limit: number;
+    cursor?: string;
+  }) {
+    return [
+      'explore',
+      ExploreService.CACHE_VERSION,
+      'for-you',
+      `user=${options.userId}`,
+      `topic=${options.topic ?? ''}`,
+      `limit=${options.limit}`,
+      `cursor=${options.cursor ?? ''}`,
+    ].join(':');
+  }
+
+  private getPublicExploreCacheTtlSeconds() {
+    return this.readCacheTtlSeconds(
+      process.env.EXPLORE_PUBLIC_CACHE_TTL_SECONDS,
+      ExploreService.DEFAULT_PUBLIC_CACHE_TTL_SECONDS,
+    );
+  }
+
+  private getPublicExploreStaleTtlSeconds() {
+    return this.readCacheTtlSeconds(
+      process.env.EXPLORE_PUBLIC_CACHE_STALE_TTL_SECONDS,
+      ExploreService.DEFAULT_PUBLIC_STALE_TTL_SECONDS,
+    );
+  }
+
+  private getForYouCacheTtlSeconds() {
+    return this.readCacheTtlSeconds(
+      process.env.EXPLORE_FOR_YOU_CACHE_TTL_SECONDS,
+      ExploreService.DEFAULT_FOR_YOU_CACHE_TTL_SECONDS,
+    );
+  }
+
+  private getForYouStaleTtlSeconds() {
+    return this.readCacheTtlSeconds(
+      process.env.EXPLORE_FOR_YOU_CACHE_STALE_TTL_SECONDS,
+      ExploreService.DEFAULT_FOR_YOU_STALE_TTL_SECONDS,
+    );
+  }
+
+  private readCacheTtlSeconds(raw: string | undefined, fallback: number) {
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return fallback;
+    }
+    return Math.floor(parsed);
+  }
+
+  private async getCachedWithStaleWhileRevalidate<T>(options: {
+    key: string;
+    freshTtlSeconds: number;
+    staleTtlSeconds: number;
+    producer: () => Promise<T>;
+  }): Promise<T> {
+    const cacheState = await this.getCacheEnvelope<T>(options.key);
+    if (cacheState.state === 'fresh' && cacheState.payload !== undefined) {
+      return cacheState.payload;
+    }
+
+    if (cacheState.state === 'stale' && cacheState.payload !== undefined) {
+      void this.revalidateCacheInBackground(options);
+      return cacheState.payload;
+    }
+
+    const payload = await options.producer();
+    await this.setCacheEnvelope(
+      options.key,
+      payload,
+      options.freshTtlSeconds,
+      options.staleTtlSeconds,
+    );
+    return payload;
+  }
+
+  private async revalidateCacheInBackground<T>(options: {
+    key: string;
+    freshTtlSeconds: number;
+    staleTtlSeconds: number;
+    producer: () => Promise<T>;
+  }): Promise<void> {
+    const lockKey = `${options.key}:revalidate-lock`;
+    try {
+      const locked = await this.redis.set(
+        lockKey,
+        '1',
+        'EX',
+        ExploreService.CACHE_REVALIDATE_LOCK_TTL_SECONDS,
+        'NX',
+      );
+
+      if (locked !== 'OK') {
+        return;
+      }
+
+      const refreshed = await options.producer();
+      await this.setCacheEnvelope(
+        options.key,
+        refreshed,
+        options.freshTtlSeconds,
+        options.staleTtlSeconds,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `Explore cache background revalidate failed for key=${options.key}: ${message}`,
+      );
+    }
+  }
+
+  private async getCacheEnvelope<T>(
+    key: string,
+  ): Promise<{ state: 'miss' | 'fresh' | 'stale'; payload?: T }> {
+    try {
+      const raw = await this.redis.get(key);
+      if (!raw) return { state: 'miss' };
+
+      const parsed = JSON.parse(raw) as
+        | {
+            payload: T;
+            freshUntilMs: number;
+            staleUntilMs: number;
+          }
+        | T;
+
+      // Backward compatibility with old plain JSON cache payload.
+      if (
+        !parsed ||
+        typeof parsed !== 'object' ||
+        !('payload' in parsed) ||
+        !('freshUntilMs' in parsed) ||
+        !('staleUntilMs' in parsed)
+      ) {
+        return { state: 'fresh', payload: parsed as T };
+      }
+
+      const envelope = parsed as {
+        payload: T;
+        freshUntilMs: number;
+        staleUntilMs: number;
+      };
+      const now = Date.now();
+      if (now <= envelope.freshUntilMs) {
+        return { state: 'fresh', payload: envelope.payload };
+      }
+      if (now <= envelope.staleUntilMs) {
+        return { state: 'stale', payload: envelope.payload };
+      }
+
+      return { state: 'miss' };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Explore cache read failed for key=${key}: ${message}`);
+      return { state: 'miss' };
+    }
+  }
+
+  private async setCacheEnvelope<T>(
+    key: string,
+    payload: T,
+    freshTtlSeconds: number,
+    staleTtlSeconds: number,
+  ): Promise<void> {
+    try {
+      const now = Date.now();
+      const freshUntilMs = now + freshTtlSeconds * 1000;
+      const staleUntilMs = freshUntilMs + staleTtlSeconds * 1000;
+      await this.redis.set(
+        key,
+        JSON.stringify({
+          payload,
+          freshUntilMs,
+          staleUntilMs,
+        }),
+        'EX',
+        freshTtlSeconds + staleTtlSeconds,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Explore cache write failed for key=${key}: ${message}`);
+    }
   }
 
   private async serializeExploreItem(item: ExploreItemWithRelations) {

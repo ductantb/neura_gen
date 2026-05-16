@@ -158,6 +158,32 @@ describe('AuthService', () => {
     ).rejects.toThrow(UnauthorizedException);
   });
 
+  it('auto registers on first-time Google login when account does not exist', async () => {
+    const profile = {
+      googleId: 'google-123',
+      email: 'new-user@example.com',
+      username: 'new-user',
+    };
+    const authPayload = {
+      userId: 'user-id',
+      username: 'new-user',
+      email: 'new-user@example.com',
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+    };
+
+    prismaService.user.findUnique
+      .mockResolvedValueOnce(null) // find by googleId
+      .mockResolvedValueOnce(null); // find by email
+
+    const registerSpy = jest
+      .spyOn(service, 'registerWithGoogle')
+      .mockResolvedValue(authPayload);
+
+    await expect(service.loginWithGoogle(profile)).resolves.toEqual(authPayload);
+    expect(registerSpy).toHaveBeenCalledWith(profile);
+  });
+
   it('normalizes email when handling forgot password', async () => {
     prismaService.user.findUnique.mockResolvedValue(null);
 
